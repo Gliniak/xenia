@@ -123,17 +123,20 @@ class Emulator {
   // Launches a game from the given file path.
   // This will attempt to infer the type of the given file (such as an iso, etc)
   // using heuristics.
-  X_STATUS LaunchPath(const std::filesystem::path& path);
+  X_STATUS LaunchPath(const std::filesystem::path& path, bool discSwap = false);
 
   // Launches a game from a .xex file by mounting the containing folder as if it
   // was an extracted STFS container.
-  X_STATUS LaunchXexFile(const std::filesystem::path& path);
+  X_STATUS LaunchXexFile(const std::filesystem::path& path,
+                         bool discSwap = false);
 
   // Launches a game from a disc image file (.iso, etc).
-  X_STATUS LaunchDiscImage(const std::filesystem::path& path);
+  X_STATUS LaunchDiscImage(const std::filesystem::path& path,
+                           bool discSwap = false);
 
   // Launches a game from an STFS container file.
-  X_STATUS LaunchStfsContainer(const std::filesystem::path& path);
+  X_STATUS LaunchStfsContainer(const std::filesystem::path& path,
+                               bool discSwap = false);
 
   void Pause();
   void Resume();
@@ -145,6 +148,7 @@ class Emulator {
   // The game can request another title to be loaded.
   bool TitleRequested();
   void LaunchNextTitle();
+  const std::filesystem::path GetNewDiscPath(std::string window_message = "");
 
   void WaitUntilExit();
 

@@ -40,6 +40,7 @@
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
 #include "xenia/memory.h"
 #include "xenia/ui/imgui_dialog.h"
+#include "xenia/ui/file_picker.h"
 #include "xenia/vfs/devices/disc_image_device.h"
 #include "xenia/vfs/devices/host_path_device.h"
 #include "xenia/vfs/devices/stfs_container_device.h"
@@ -247,24 +248,26 @@ X_STATUS Emulator::TerminateTitle() {
   return X_STATUS_SUCCESS;
 }
 
-X_STATUS Emulator::LaunchPath(const std::filesystem::path& path) {
+X_STATUS Emulator::LaunchPath(const std::filesystem::path& path,
+                              bool discSwap) {
   // Launch based on file type.
   // This is a silly guess based on file extension.
   if (!path.has_extension()) {
     // Likely an STFS container.
-    return LaunchStfsContainer(path);
+    return LaunchStfsContainer(path, discSwap);
   };
   auto extension = xe::utf8::lower_ascii(xe::path_to_utf8(path.extension()));
   if (extension == ".xex" || extension == ".elf" || extension == ".exe") {
     // Treat as a naked xex file.
-    return LaunchXexFile(path);
+    return LaunchXexFile(path, discSwap);
   } else {
     // Assume a disc image.
-    return LaunchDiscImage(path);
+    return LaunchDiscImage(path, discSwap);
   }
 }
 
-X_STATUS Emulator::LaunchXexFile(const std::filesystem::path& path) {
+X_STATUS Emulator::LaunchXexFile(const std::filesystem::path& path,
+                                 bool discSwap) {
   // We create a virtual filesystem pointing to its directory and symlink
   // that to the game filesystem.
   // e.g., /my/files/foo.xex will get a local fs at:
@@ -273,6 +276,10 @@ X_STATUS Emulator::LaunchXexFile(const std::filesystem::path& path) {
   // -> game:\foo.xex
 
   auto mount_path = "\\Device\\Harddisk0\\Partition0";
+
+  if (discSwap) {
+    mount_path = "\\Device\\LauncherData";
+  }
 
   // Register the local directory in the virtual filesystem.
   auto parent_path = path.parent_path();
@@ -296,12 +303,16 @@ X_STATUS Emulator::LaunchXexFile(const std::filesystem::path& path) {
 
   // Launch the game.
   auto fs_path = "game:\\" + xe::path_to_utf8(file_name);
-  return CompleteLaunch(path, fs_path);
+  return !discSwap ? CompleteLaunch(path, fs_path) : X_STATUS_SUCCESS;
 }
 
-X_STATUS Emulator::LaunchDiscImage(const std::filesystem::path& path) {
+X_STATUS Emulator::LaunchDiscImage(const std::filesystem::path& path,
+                                   bool discSwap) {
   auto mount_path = "\\Device\\Cdrom0";
 
+  if (discSwap) {
+    mount_path = "\\Device\\LauncherData";
+  }
   // Register the disc image in the virtual filesystem.
   auto device = std::make_unique<vfs::DiscImageDevice>(mount_path, path);
   if (!device->Initialize()) {
@@ -313,18 +324,28 @@ X_STATUS Emulator::LaunchDiscImage(const std::filesystem::path& path) {
     return X_STATUS_NO_SUCH_FILE;
   }
 
+  file_system_->UnregisterSymbolicLink("d:");
+  file_system_->UnregisterSymbolicLink("game:");
   // Create symlinks to the device.
   file_system_->RegisterSymbolicLink("game:", mount_path);
   file_system_->RegisterSymbolicLink("d:", mount_path);
 
   // Launch the game.
+  if (discSwap) {
+    return X_STATUS_SUCCESS;
+  }
+
   auto module_path(FindLaunchModule());
   return CompleteLaunch(path, module_path);
 }
 
-X_STATUS Emulator::LaunchStfsContainer(const std::filesystem::path& path) {
+X_STATUS Emulator::LaunchStfsContainer(const std::filesystem::path& path,
+                                       bool discSwap) {
   auto mount_path = "\\Device\\Cdrom0";
 
+  if (discSwap) {
+    mount_path = "\\Device\\LauncherData";
+  }
   // Register the container in the virtual filesystem.
   auto device = std::make_unique<vfs::StfsContainerDevice>(mount_path, path);
   if (!device->Initialize()) {
@@ -341,6 +362,10 @@ X_STATUS Emulator::LaunchStfsContainer(const std::filesystem::path& path) {
   file_system_->RegisterSymbolicLink("d:", mount_path);
 
   // Launch the game.
+  if (discSwap) {
+    return X_STATUS_SUCCESS;
+  }
+
   auto module_path(FindLaunchModule());
   return CompleteLaunch(path, module_path);
 }
@@ -503,7 +528,36 @@ void Emulator::LaunchNextTitle() {
   auto xam = kernel_state()->GetKernelModule<kernel::xam::XamModule>("xam.xex");
   auto next_title = xam->loader_data().launch_path;
 
+  // Swap disk doesn't require reloading
+  // This function should be purged?
   CompleteLaunch("", next_title);
+}
+
+const std::filesystem::path Emulator::GetNewDiscPath(
+    std::string window_message) {
+  std::filesystem::path path = "";
+
+  auto file_picker = xe::ui::FilePicker::Create();
+  file_picker->set_mode(ui::FilePicker::Mode::kOpen);
+  file_picker->set_type(ui::FilePicker::Type::kFile);
+  file_picker->set_multi_selection(false);
+  file_picker->set_title(!window_message.empty() ? window_message
+                                                 : "Select Content Package");
+  file_picker->set_extensions({
+      {"Supported Files", "*.iso;*.xex;*.xcp;*.*"},
+      {"Disc Image (*.iso)", "*.iso"},
+      {"Xbox Executable (*.xex)", "*.xex"},
+      {"All Files (*.*)", "*.*"},
+  });
+
+  if (file_picker->Show(
+          kernel_state()->emulator()->display_window()->native_handle())) {
+    auto selected_files = file_picker->selected_files();
+    if (!selected_files.empty()) {
+      path = selected_files[0];
+    }
+  }
+  return path;
 }
 
 bool Emulator::ExceptionCallbackThunk(Exception* ex, void* data) {
@@ -563,7 +617,6 @@ bool Emulator::ExceptionCallback(Exception* ex) {
            context->v[i].u32[0], context->v[i].u32[1], context->v[i].u32[2],
            context->v[i].u32[3]);
   }
-
   // Display a dialog telling the user the guest has crashed.
   display_window()->loop()->PostSynchronous([&]() {
     xe::ui::ImGuiDialog::ShowMessageBox(

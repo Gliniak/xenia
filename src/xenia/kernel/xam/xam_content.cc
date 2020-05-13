@@ -11,6 +11,8 @@
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/xam_private.h"
+#include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
+#include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
 #include "xenia/kernel/xenumerator.h"
 #include "xenia/xbox.h"
 
@@ -475,6 +477,47 @@ dword_result_t XamContentDelete(dword_t user_index, lpvoid_t content_data_ptr,
   }
 }
 DECLARE_XAM_EXPORT1(XamContentDelete, kContent, kImplemented);
+
+typedef struct {
+  xe::be<uint32_t> stringTitlePtr;
+  xe::be<uint32_t> stringTextPtr;
+  xe::be<uint32_t> stringBtnMsgPtr;
+} X_SWAPDISC_ERROR_MESSAGE;
+static_assert_size(X_SWAPDISC_ERROR_MESSAGE, 12);
+
+dword_result_t XamSwapDisc(dword_t disc_number,
+                           pointer_t<X_KEVENT> completion_handle,
+                           pointer_t<X_SWAPDISC_ERROR_MESSAGE> error_message) {
+  auto filesystem = kernel_state()->file_system();
+  auto mount_path = "\\Device\\LauncherData";
+
+  if (filesystem->ResolvePath(mount_path) != NULL) {
+    filesystem->UnregisterDevice(mount_path);
+  }
+
+  std::u16string text_message = xe::load_and_swap<std::u16string>(
+      kernel_state()->memory()->TranslateVirtual(error_message->stringTextPtr));
+
+  const std::filesystem::path new_disc_path =
+      kernel_state()->emulator()->GetNewDiscPath(xe::to_utf8(text_message));
+  XELOGI("GetNewDiscPath returned path {}.", new_disc_path.string().c_str());
+
+  // TODO(Gliniak): Implement checking if inserted file is requested one
+  kernel_state()->emulator()->LaunchPath(new_disc_path, true);
+
+  // Resolve the pending disc swap event
+  auto kevent = xboxkrnl::xeKeSetEvent(completion_handle, 1, 0);
+
+  // Release the completion handle
+  auto object =
+      XObject::GetNativeObject<XObject>(kernel_state(), completion_handle);
+  if (object) {
+    object->Retain();
+  }
+
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamSwapDisc, kContent, kSketchy);
 
 void RegisterContentExports(xe::cpu::ExportResolver* export_resolver,
                             KernelState* kernel_state) {}
