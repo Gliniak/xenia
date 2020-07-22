@@ -23,6 +23,11 @@
 
 #include "third_party/fmt/include/fmt/format.h"
 
+DEFINE_bool(
+    skip_enumerate_cleanup, 1,
+    "Ignore memory zeroing for enumeratations.",
+    "Kernel");
+
 namespace xe {
 namespace kernel {
 namespace xam {
@@ -366,7 +371,8 @@ dword_result_t XamEnumerate(dword_t handle, dword_t flags, lpvoid_t buffer,
         e->items_per_enumerate());
   }
 
-  buffer.Zero(actual_buffer_length);
+  if (!cvars::skip_enumerate_cleanup)
+    buffer.Zero(actual_buffer_length);
 
   X_RESULT result;
   uint32_t item_count = 0;
