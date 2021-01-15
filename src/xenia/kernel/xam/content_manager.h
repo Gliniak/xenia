@@ -150,6 +150,7 @@ class ContentManager {
                                std::vector<uint8_t> buffer);
   X_RESULT DeleteContent(const ContentData& data);
   std::filesystem::path ResolveGameUserContentPath();
+  void CloseOpenedFilesFromContent(const std::string_view root_name);
 
  private:
   std::filesystem::path ResolvePackageRoot(uint32_t content_type);
