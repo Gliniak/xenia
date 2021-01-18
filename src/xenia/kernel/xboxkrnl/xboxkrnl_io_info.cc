@@ -237,6 +237,30 @@ dword_result_t NtSetInformationFile(
       }
       break;
     }
+    case XFileRenameInformation: {
+      auto info = info_ptr.as<X_FILE_RENAME_INFORMATION*>();
+      auto root_handle = uint32_t(info->root_dir_handle);
+
+      const std::string target_path =
+          std::string(kernel_memory()->TranslateVirtual<const char*>(
+                          info->ansi_string.pointer),
+                      info->ansi_string.length);
+
+      // Place IsValidPath in path from where it can be accessed everywhere
+      // if (!IsValidPath(target_path, false)) {
+      //  return X_STATUS_OBJECT_NAME_INVALID;
+      //}
+
+      const std::string file_name = target_path.substr(
+          target_path.find_last_of('\\') + 1, target_path.length());
+
+      auto path = kernel_state()->file_system()->ResolvePath(
+          target_path.substr(0, target_path.find_first_of('\\')));
+
+      file->SetName(file_name);
+      out_length = sizeof(*info);
+      break;
+    }
     default:
       // Unsupported, for now.
       assert_always();
