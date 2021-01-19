@@ -139,6 +139,10 @@ class ContentManager {
       const std::string_view root_name, const ContentData& data);
 
   bool ContentExists(const ContentData& data);
+  X_RESULT WriteContentHeaderFile(const std::string file_name,
+                                   const XCONTENT_DATA* data_raw);
+  X_RESULT ReadContentHeaderFile(const std::string_view file_name,
+                                 uint32_t content_type, XCONTENT_DATA& data);
   X_RESULT CreateContent(const std::string_view root_name,
                          const ContentData& data);
   X_RESULT OpenContent(const std::string_view root_name,

@@ -9,6 +9,7 @@
 
 #include "xenia/kernel/xam/content_manager.h"
 
+#include <array>
 #include <string>
 
 #include "third_party/fmt/include/fmt/format.h"
@@ -25,6 +26,7 @@ namespace xam {
 static const char* kThumbnailFileName = "__thumbnail.png";
 
 static const char* kGameUserContentDirName = "profile";
+static const char* kGameContentHeaderDirName = "Headers";
 
 static int content_device_id_ = 0;
 
@@ -108,14 +110,22 @@ std::vector<ContentData> ContentManager::ListContent(uint32_t device_id,
       // Directories only.
       continue;
     }
-    ContentData content_data;
-    content_data.device_id = device_id;
-    content_data.content_type = content_type;
-    content_data.display_name = xe::path_to_utf16(file_info.name);
-    content_data.file_name = xe::path_to_utf8(file_info.name);
-    result.emplace_back(std::move(content_data));
-  }
 
+    XCONTENT_DATA content_data_raw;
+    if (XSUCCEEDED(
+            ReadContentHeaderFile(xe::path_to_utf8(file_info.name) + ".header",
+                                  content_type, content_data_raw))) {
+      auto content_data = static_cast<ContentData>(content_data_raw);
+      result.emplace_back(std::move(content_data));
+    } else {
+      ContentData content_data;
+      content_data.device_id = device_id;
+      content_data.content_type = content_type;
+      content_data.display_name = xe::path_to_utf16(file_info.name);
+      content_data.file_name = xe::path_to_utf8(file_info.name);
+      result.emplace_back(std::move(content_data));
+    }
+  }
   return result;
 }
 
@@ -136,6 +146,63 @@ std::unique_ptr<ContentPackage> ContentManager::ResolvePackage(
 bool ContentManager::ContentExists(const ContentData& data) {
   auto path = ResolvePackagePath(data);
   return std::filesystem::exists(path);
+}
+
+X_RESULT ContentManager::WriteContentHeaderFile(const std::string file_name,
+                                                 const XCONTENT_DATA* data) {
+  auto title_id = fmt::format("{:8X}", kernel_state_->title_id());
+  auto content_type = fmt::format("{:08X}", data->content_type);
+  auto header_path =
+      root_path_ / title_id / kGameContentHeaderDirName / content_type;
+
+  if (!std::filesystem::exists(header_path)) {
+    if (!std::filesystem::create_directories(header_path)) {
+      return X_STATUS_ACCESS_DENIED;
+    }
+  }
+  auto header_filename = file_name + ".header";
+
+  xe::filesystem::CreateFile(header_path / header_filename);
+
+  if (std::filesystem::exists(header_path / header_filename)) {
+    auto file = xe::filesystem::OpenFile(header_path / header_filename, "wb");
+    fwrite(data, 1, sizeof(XCONTENT_DATA), file);
+    fclose(file);
+    return X_STATUS_SUCCESS;
+  }
+  return X_STATUS_NO_SUCH_FILE;
+}
+
+X_RESULT ContentManager::ReadContentHeaderFile(const std::string_view file_name,
+                                               uint32_t content_type,
+                                               XCONTENT_DATA& data) {
+  auto title_id = fmt::format("{:8X}", kernel_state_->title_id());
+  auto content_type_directory = fmt::format("{:08X}", content_type);
+  auto header_file_path = root_path_ / title_id / kGameContentHeaderDirName /
+                          content_type_directory / file_name;
+  constexpr uint32_t header_size = sizeof(XCONTENT_DATA);
+
+  if (std::filesystem::exists(header_file_path)) {
+    auto file = xe::filesystem::OpenFile(header_file_path, "rb");
+
+    std::array<uint8_t, header_size> buffer;
+
+    auto fize_size = std::filesystem::file_size(header_file_path);
+    if (fize_size != header_size) {
+      fclose(file);
+      return X_STATUS_END_OF_FILE;
+    }
+
+    size_t result = fread(buffer.data(), 1, header_size, file);
+    if (result != header_size) {
+      fclose(file);
+      return X_STATUS_END_OF_FILE;
+    }
+    fclose(file);
+    std::memcpy(&data, buffer.data(), buffer.size());
+    return X_STATUS_SUCCESS;
+  }
+  return X_STATUS_NO_SUCH_FILE;
 }
 
 X_RESULT ContentManager::CreateContent(const std::string_view root_name,

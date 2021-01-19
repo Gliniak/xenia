@@ -193,6 +193,12 @@ dword_result_t XamContentCreateEx(dword_t user_index, lpstring_t root_name,
 
   if (create) {
     result = content_manager->CreateContent(root_name.value(), content_data);
+    if (XSUCCEEDED(result)) {
+      const XCONTENT_DATA* content_data_raw =
+          content_data_ptr.as<XCONTENT_DATA*>();
+      content_manager->WriteContentHeaderFile(content_data.file_name,
+                                              content_data_raw);
+    }
   } else if (open) {
     result = content_manager->OpenContent(root_name.value(), content_data);
   }
