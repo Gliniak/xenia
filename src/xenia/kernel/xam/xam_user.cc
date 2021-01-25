@@ -552,21 +552,68 @@ dword_result_t XamShowSigninUI(dword_t unk, dword_t unk_mask) {
 }
 DECLARE_XAM_EXPORT1(XamShowSigninUI, kUserProfiles, kStub);
 
+#pragma pack(push, 1)
+struct X_ACHIEVEMENT_DETAILS {
+  xe::be<uint32_t> id;
+  xe::be<uint32_t> label_ptr;
+  xe::be<uint32_t> description_ptr;
+  xe::be<uint32_t> unachieved_ptr;
+  xe::be<uint32_t> image_id;
+  xe::be<uint32_t> gamerscore;
+  xe::be<uint64_t> unlock_time;
+  xe::be<uint32_t> flags;
+};
+static_assert_size(X_ACHIEVEMENT_DETAILS, 36);
+#pragma pack(pop)
+
 dword_result_t XamUserCreateAchievementEnumerator(dword_t title_id,
                                                   dword_t user_index,
                                                   dword_t xuid, dword_t flags,
                                                   dword_t offset, dword_t count,
                                                   lpdword_t buffer_size_ptr,
                                                   lpdword_t handle_ptr) {
+  if (!count || !buffer_size_ptr || !handle_ptr) {
+    return X_ERROR_INVALID_PARAMETER;
+  }
+
+  if (user_index >= 4) {
+    return X_ERROR_INVALID_PARAMETER;
+  }
+
+  // Providing flag 0x20 only gives you basic info about achievements
+  uint32_t entry_size = 500;
+  if (flags & 0x20) {
+    entry_size = sizeof(X_ACHIEVEMENT_DETAILS);
+  }
+
   if (buffer_size_ptr) {
-    *buffer_size_ptr = 500 * count;
+    *buffer_size_ptr = entry_size * count;
   }
 
   auto e = object_ref<XStaticEnumerator>(
-      new XStaticEnumerator(kernel_state(), count, 500));
+      new XStaticEnumerator(kernel_state(), count, entry_size));
   auto result = e->Initialize(user_index, 0xFB, 0xB000A, 0xB000B, 0);
   if (XFAILED(result)) {
     return result;
+  }
+
+  std::u16string dummy_achievement_text = to_utf16("Dummy Text");
+  uint32_t alloc_ptr =
+      kernel_memory()->SystemHeapAlloc(sizeof(dummy_achievement_text));
+  xe::copy_and_swap(kernel_memory()->TranslateVirtual<char16_t*>(alloc_ptr),
+                    dummy_achievement_text.data(),
+                    sizeof(dummy_achievement_text));
+
+  for (uint8_t i = 0; i < count; i++) {
+    auto* details = (X_ACHIEVEMENT_DETAILS*)e->AppendItem();
+    details->id = i;
+    details->image_id = 0;
+    details->gamerscore = 0;
+    details->unlock_time = 0;
+    details->flags = 0;
+    details->description_ptr = alloc_ptr;
+    details->label_ptr = alloc_ptr;
+    details->unachieved_ptr = alloc_ptr;
   }
 
   *handle_ptr = e->handle();
