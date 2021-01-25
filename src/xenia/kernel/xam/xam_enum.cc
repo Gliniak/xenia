@@ -52,7 +52,7 @@ uint32_t xeXamEnumerate(uint32_t handle, uint32_t flags, void* buffer,
           e->items_per_enumerate());
     }
 
-    std::memset(buffer, 0, actual_buffer_length);
+    std::memset(buffer, 0, 0x1C);
 
     if (actual_buffer_length < e->item_size()) {
       result = X_ERROR_INSUFFICIENT_BUFFER;
