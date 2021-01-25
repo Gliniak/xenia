@@ -458,7 +458,8 @@ dword_result_t NtSetIoCompletion(dword_t handle, dword_t key_context,
   port->QueueNotification(notification);
   return X_STATUS_SUCCESS;
 }
-DECLARE_XBOXKRNL_EXPORT1(NtSetIoCompletion, kFileSystem, kImplemented);
+DECLARE_XBOXKRNL_EXPORT2(NtSetIoCompletion, kFileSystem, kImplemented,
+                         kHighFrequency);
 
 // Dequeues a packet from the completion port.
 dword_result_t NtRemoveIoCompletion(
@@ -488,12 +489,18 @@ dword_result_t NtRemoveIoCompletion(
       io_status_block->information = notification.num_bytes;
     }
   } else {
-    status = X_STATUS_TIMEOUT;
+    // TODO(Gliniak): We're returning X_STATUS_SUCCESS here instead of
+    // X_STATUS_TIMEOUT due to timing issues between threads when subthread
+    // execute NtRemoveIoCompletion before mainthread execute NtSetIoCompletion
+    // Returning X_STATUS_SUCCESS suprisingly doesn't bother titles that uses
+    // this function, but X_STATUS_TIMEOUT causes them to lock
+    status = X_STATUS_SUCCESS;
   }
 
   return status;
 }
-DECLARE_XBOXKRNL_EXPORT1(NtRemoveIoCompletion, kFileSystem, kImplemented);
+DECLARE_XBOXKRNL_EXPORT2(NtRemoveIoCompletion, kFileSystem, kImplemented,
+                         kHighFrequency);
 
 dword_result_t NtQueryFullAttributesFile(
     pointer_t<X_OBJECT_ATTRIBUTES> obj_attribs,
