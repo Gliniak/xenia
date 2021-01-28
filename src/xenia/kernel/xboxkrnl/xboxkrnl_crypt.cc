@@ -660,6 +660,27 @@ dword_result_t XeKeysObscureKey(lpvoid_t input, lpvoid_t output) {
 }
 DECLARE_XBOXKRNL_EXPORT1(XeKeysObscureKey, kNone, kImplemented);
 
+dword_result_t XeKeysHmacShaUsingKey(lpvoid_t obscured_key, lpvoid_t inp_1,
+                                     dword_t inp_1_size, lpvoid_t inp_2,
+                                     dword_t inp_2_size, lpvoid_t inp_3,
+                                     dword_t inp_3_size, lpvoid_t out,
+                                     dword_t out_size) {
+  if (obscured_key) {
+    uint8_t key[16];
+
+    // Deobscure key
+    XECRYPT_AES_STATE aes;
+    XeCryptAesKey(&aes, (uint8_t*)xe_key_obfuscation_key);
+    XeCryptAesEcb(&aes, obscured_key, key, 0);
+
+    XeCryptHmacSha(key, 0x10, inp_1, inp_1_size, inp_2, inp_2_size, inp_3,
+                   inp_3_size, out, out_size);
+    return X_STATUS_SUCCESS;
+  }
+  return X_STATUS_INVALID_PARAMETER;
+}
+DECLARE_XBOXKRNL_EXPORT1(XeKeysHmacShaUsingKey, kNone, kImplemented);
+
 void RegisterCryptExports(xe::cpu::ExportResolver* export_resolver,
                           KernelState* kernel_state) {}
 
