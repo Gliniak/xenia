@@ -1777,9 +1777,12 @@ int InstrEmit_vsum4ubs(PPCHIRBuilder& f, const InstrData& i) {
   return 1;
 }
 
-int InstrEmit_vpkpx(PPCHIRBuilder& f, const InstrData& i) {
-  XEINSTRNOTIMPLEMENTED();
-  return 1;
+int InstrEmit_vpkpx(PPCHIRBuilder& f, uint32_t vd, uint32_t va, uint32_t vb) {
+  Value* v = f.Pack(f.LoadVR(va), f.LoadVR(vb),
+                    PACK_TYPE_8_8_8_8_IN_1_5_5_5 | PACK_TYPE_IN_UNSIGNED |
+                        PACK_TYPE_OUT_UNSIGNED | PACK_TYPE_OUT_UNSATURATE);
+  f.StoreVR(vd, v);
+  return 0;
 }
 
 int InstrEmit_vpkshss_(PPCHIRBuilder& f, uint32_t vd, uint32_t va,

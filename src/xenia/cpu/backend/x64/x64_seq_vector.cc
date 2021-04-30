@@ -1847,6 +1847,9 @@ struct PACK : Sequence<PACK, I<OPCODE_PACK, V128Op, V128Op, V128Op>> {
       case PACK_TYPE_16_IN_32:
         Emit16_IN_32(e, i, i.instr->flags);
         break;
+      case PACK_TYPE_8_8_8_8_IN_1_5_5_5:
+        Emit8_8_8_8_IN_1_5_5_5(e, i, i.instr->flags);
+        break;
       default:
         assert_unhandled_case(i.instr->flags);
         break;
@@ -2228,7 +2231,13 @@ struct PACK : Sequence<PACK, I<OPCODE_PACK, V128Op, V128Op, V128Op>> {
       }
     }
   }
-};
+  // PACK_TYPE_8_8_8_8_IN_1_5_5_5
+  // Pack 32-bit vectors into a 16-bit vector.
+  static void Emit8_8_8_8_IN_1_5_5_5(X64Emitter& e, const EmitArgType& i,
+                           uint32_t flags){
+    e.xmm
+  }
+ };
 EMITTER_OPCODE_TABLE(OPCODE_PACK, PACK);
 
 // ============================================================================
