@@ -49,18 +49,32 @@ dword_result_t XamContentGetLicenseMask(lpdword_t mask_ptr,
 DECLARE_XAM_EXPORT2(XamContentGetLicenseMask, kContent, kStub, kHighFrequency);
 
 dword_result_t XamContentResolve(dword_t user_index, lpvoid_t content_data_ptr,
-                                 lpunknown_t buffer_ptr, dword_t buffer_size,
+                                 lpvoid_t buffer_ptr, dword_t buffer_size,
                                  dword_t unk1, dword_t unk2, dword_t unk3) {
-  auto content_data = content_data_ptr.as<XCONTENT_DATA*>();
+  auto content_manager = kernel_state()->content_manager();
+  auto content_data =
+      static_cast<ContentData>(*content_data_ptr.as<XCONTENT_DATA*>());
+
+  if (!buffer_ptr) {
+    return X_ERROR_INVALID_PARAMETER;
+  }
+
+  if (!content_manager->ContentExists(content_data)) {
+    return X_ERROR_FILE_NOT_FOUND;
+  }
+
+  auto root_name = content_data.file_name;
+  auto status = content_manager->OpenContent(root_name, content_data);
+
+  auto path = root_name + ":\\" + content_data.file_name;
+  std::memcpy((uint8_t*)buffer_ptr, path.data(), path.size());
 
   // Result of buffer_ptr is sent to RtlInitAnsiString.
   // buffer_size is usually 260 (max path).
   // Games expect zero if resolve was successful.
-  assert_always();
-  XELOGW("XamContentResolve unimplemented!");
-  return X_ERROR_NOT_FOUND;
+  return X_ERROR_SUCCESS;
 }
-DECLARE_XAM_EXPORT1(XamContentResolve, kContent, kStub);
+DECLARE_XAM_EXPORT1(XamContentResolve, kContent, kSketchy);
 
 // https://github.com/MrColdbird/gameservice/blob/master/ContentManager.cpp
 // https://github.com/LestaD/SourceEngine2007/blob/master/se2007/engine/xboxsystem.cpp#L499
