@@ -420,7 +420,7 @@ int InstrEmit_mcrf(PPCHIRBuilder& f, const InstrData& i) {
   Value* bi = f.LoadCR(i.XL.BI >> 2);
 
   f.StoreCR(crfd, bi);
-  f.UpdateCR(crfd, bi);
+  f.ComputeAndStoreCR(crfd, bi);
   return 0;
 }
 

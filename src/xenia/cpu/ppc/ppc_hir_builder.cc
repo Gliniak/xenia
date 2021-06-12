@@ -387,11 +387,11 @@ void PPCHIRBuilder::StoreCRField(uint32_t n, uint32_t bit, Value* value) {
   // TODO(benvanik): trace CR.
 }
 
-void PPCHIRBuilder::UpdateCR(uint32_t n, Value* lhs, bool is_signed) {
-  UpdateCR(n, Truncate(lhs, INT32_TYPE), LoadZeroInt32(), is_signed);
+void PPCHIRBuilder::ComputeAndStoreCR(uint32_t n, Value* lhs, bool is_signed) {
+  ComputeAndStoreCR(n, Truncate(lhs, INT32_TYPE), LoadZeroInt32(), is_signed);
 }
 
-void PPCHIRBuilder::UpdateCR(uint32_t n, Value* lhs, Value* rhs,
+void PPCHIRBuilder::ComputeAndStoreCR(uint32_t n, Value* lhs, Value* rhs,
                              bool is_signed) {
   if (is_signed) {
     Value* lt = CompareSLT(lhs, rhs);

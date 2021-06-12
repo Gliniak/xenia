@@ -54,7 +54,7 @@ int InstrEmit_addx(PPCHIRBuilder& f, const InstrData& i) {
     // e.update_xer_with_overflow(EFLAGS OF?);
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -73,7 +73,7 @@ int InstrEmit_addcx(PPCHIRBuilder& f, const InstrData& i) {
     f.StoreCA(AddDidCarry(f, ra, rb));
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -92,7 +92,7 @@ int InstrEmit_addex(PPCHIRBuilder& f, const InstrData& i) {
     f.StoreCA(AddWithCarryDidCarry(f, ra, rb, f.LoadCA()));
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -128,7 +128,7 @@ int InstrEmit_addicx(PPCHIRBuilder& f, const InstrData& i) {
   Value* v = f.Add(f.LoadGPR(i.D.RA), f.LoadConstantInt64(XEEXTS16(i.D.DS)));
   f.StoreGPR(i.D.RT, v);
   f.StoreCA(AddDidCarry(f, ra, f.LoadConstantInt64(XEEXTS16(i.D.DS))));
-  f.UpdateCR(0, v);
+  f.ComputeAndStoreCR(0, v);
   return 0;
 }
 
@@ -161,7 +161,7 @@ int InstrEmit_addmex(PPCHIRBuilder& f, const InstrData& i) {
     f.StoreCA(AddWithCarryDidCarry(f, ra, f.LoadConstantInt64(-1), f.LoadCA()));
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -182,7 +182,7 @@ int InstrEmit_addzex(PPCHIRBuilder& f, const InstrData& i) {
     f.StoreCA(AddWithCarryDidCarry(f, ra, f.LoadZeroInt64(), f.LoadCA()));
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -208,7 +208,7 @@ int InstrEmit_divdx(PPCHIRBuilder& f, const InstrData& i) {
     return 1;
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -234,7 +234,7 @@ int InstrEmit_divdux(PPCHIRBuilder& f, const InstrData& i) {
     return 1;
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -262,7 +262,7 @@ int InstrEmit_divwx(PPCHIRBuilder& f, const InstrData& i) {
     return 1;
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -291,7 +291,7 @@ int InstrEmit_divwux(PPCHIRBuilder& f, const InstrData& i) {
     return 1;
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -306,7 +306,7 @@ int InstrEmit_mulhdx(PPCHIRBuilder& f, const InstrData& i) {
   Value* v = f.MulHi(f.LoadGPR(i.XO.RA), f.LoadGPR(i.XO.RB));
   f.StoreGPR(i.XO.RT, v);
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -322,7 +322,7 @@ int InstrEmit_mulhdux(PPCHIRBuilder& f, const InstrData& i) {
       f.MulHi(f.LoadGPR(i.XO.RA), f.LoadGPR(i.XO.RB), ARITHMETIC_UNSIGNED);
   f.StoreGPR(i.XO.RT, v);
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -339,7 +339,7 @@ int InstrEmit_mulhwx(PPCHIRBuilder& f, const InstrData& i) {
                           INT64_TYPE);
   f.StoreGPR(i.XO.RT, v);
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -357,7 +357,7 @@ int InstrEmit_mulhwux(PPCHIRBuilder& f, const InstrData& i) {
       INT64_TYPE);
   f.StoreGPR(i.XO.RT, v);
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -372,7 +372,7 @@ int InstrEmit_mulldx(PPCHIRBuilder& f, const InstrData& i) {
   Value* v = f.Mul(f.LoadGPR(i.XO.RA), f.LoadGPR(i.XO.RB));
   f.StoreGPR(i.XO.RT, v);
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -397,7 +397,7 @@ int InstrEmit_mullwx(PPCHIRBuilder& f, const InstrData& i) {
       f.SignExtend(f.Truncate(f.LoadGPR(i.XO.RB), INT32_TYPE), INT64_TYPE));
   f.StoreGPR(i.XO.RT, v);
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -422,14 +422,14 @@ int InstrEmit_negx(PPCHIRBuilder& f, const InstrData& i) {
 
     // if (i.XO.Rc) {
     //  // With cr0 update.
-    //  f.UpdateCR(0, v0, e.get_int64(0), true);
+    //  f.ComputeAndStoreCR(0, v0, e.get_int64(0), true);
     //}
   } else {
     // No OE bit setting.
     Value* v = f.Neg(f.LoadGPR(i.XO.RA));
     f.StoreGPR(i.XO.RT, v);
     if (i.XO.Rc) {
-      f.UpdateCR(0, v);
+      f.ComputeAndStoreCR(0, v);
     }
   }
   return 0;
@@ -444,7 +444,7 @@ int InstrEmit_subfx(PPCHIRBuilder& f, const InstrData& i) {
     // e.update_xer_with_overflow(EFLAGS??);
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -462,7 +462,7 @@ int InstrEmit_subfcx(PPCHIRBuilder& f, const InstrData& i) {
     f.StoreCA(SubDidCarry(f, rb, ra));
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -489,7 +489,7 @@ int InstrEmit_subfex(PPCHIRBuilder& f, const InstrData& i) {
     f.StoreCA(AddWithCarryDidCarry(f, not_ra, rb, f.LoadCA()));
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -507,7 +507,7 @@ int InstrEmit_subfmex(PPCHIRBuilder& f, const InstrData& i) {
         AddWithCarryDidCarry(f, not_ra, f.LoadConstantInt64(-1), f.LoadCA()));
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -524,7 +524,7 @@ int InstrEmit_subfzex(PPCHIRBuilder& f, const InstrData& i) {
     f.StoreCA(AddWithCarryDidCarry(f, not_ra, f.LoadZeroInt64(), f.LoadCA()));
   }
   if (i.XO.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -556,7 +556,7 @@ int InstrEmit_cmp(PPCHIRBuilder& f, const InstrData& i) {
     lhs = f.Truncate(f.LoadGPR(i.X.RA), INT32_TYPE);
     rhs = f.Truncate(f.LoadGPR(i.X.RB), INT32_TYPE);
   }
-  f.UpdateCR(BF, lhs, rhs);
+  f.ComputeAndStoreCR(BF, lhs, rhs);
   return 0;
 }
 
@@ -583,7 +583,7 @@ int InstrEmit_cmpi(PPCHIRBuilder& f, const InstrData& i) {
     lhs = f.Truncate(f.LoadGPR(i.D.RA), INT32_TYPE);
     rhs = f.LoadConstantInt32(int32_t(XEEXTS16(i.D.DS)));
   }
-  f.UpdateCR(BF, lhs, rhs);
+  f.ComputeAndStoreCR(BF, lhs, rhs);
   return 0;
 }
 
@@ -612,7 +612,7 @@ int InstrEmit_cmpl(PPCHIRBuilder& f, const InstrData& i) {
     lhs = f.Truncate(f.LoadGPR(i.X.RA), INT32_TYPE);
     rhs = f.Truncate(f.LoadGPR(i.X.RB), INT32_TYPE);
   }
-  f.UpdateCR(BF, lhs, rhs, false);
+  f.ComputeAndStoreCR(BF, lhs, rhs, false);
   return 0;
 }
 
@@ -639,7 +639,7 @@ int InstrEmit_cmpli(PPCHIRBuilder& f, const InstrData& i) {
     lhs = f.Truncate(f.LoadGPR(i.D.RA), INT32_TYPE);
     rhs = f.LoadConstantUint32(i.D.DS);
   }
-  f.UpdateCR(BF, lhs, rhs, false);
+  f.ComputeAndStoreCR(BF, lhs, rhs, false);
   return 0;
 }
 
@@ -650,7 +650,7 @@ int InstrEmit_andx(PPCHIRBuilder& f, const InstrData& i) {
   Value* ra = f.And(f.LoadGPR(i.X.RT), f.LoadGPR(i.X.RB));
   f.StoreGPR(i.X.RA, ra);
   if (i.X.Rc) {
-    f.UpdateCR(0, ra);
+    f.ComputeAndStoreCR(0, ra);
   }
   return 0;
 }
@@ -660,7 +660,7 @@ int InstrEmit_andcx(PPCHIRBuilder& f, const InstrData& i) {
   Value* ra = f.And(f.LoadGPR(i.X.RT), f.Not(f.LoadGPR(i.X.RB)));
   f.StoreGPR(i.X.RA, ra);
   if (i.X.Rc) {
-    f.UpdateCR(0, ra);
+    f.ComputeAndStoreCR(0, ra);
   }
   return 0;
 }
@@ -669,7 +669,7 @@ int InstrEmit_andix(PPCHIRBuilder& f, const InstrData& i) {
   // RA <- (RS) & (i48.0 || UI)
   Value* ra = f.And(f.LoadGPR(i.D.RT), f.LoadConstantUint64(XEEXTZ16(i.D.DS)));
   f.StoreGPR(i.D.RA, ra);
-  f.UpdateCR(0, ra);
+  f.ComputeAndStoreCR(0, ra);
   return 0;
 }
 
@@ -678,7 +678,7 @@ int InstrEmit_andisx(PPCHIRBuilder& f, const InstrData& i) {
   Value* ra =
       f.And(f.LoadGPR(i.D.RT), f.LoadConstantUint64(XEEXTZ16(i.D.DS) << 16));
   f.StoreGPR(i.D.RA, ra);
-  f.UpdateCR(0, ra);
+  f.ComputeAndStoreCR(0, ra);
   return 0;
 }
 
@@ -692,7 +692,7 @@ int InstrEmit_cntlzdx(PPCHIRBuilder& f, const InstrData& i) {
   v = f.ZeroExtend(v, INT64_TYPE);
   f.StoreGPR(i.X.RA, v);
   if (i.X.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -707,7 +707,7 @@ int InstrEmit_cntlzwx(PPCHIRBuilder& f, const InstrData& i) {
   v = f.ZeroExtend(v, INT64_TYPE);
   f.StoreGPR(i.X.RA, v);
   if (i.X.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -717,7 +717,7 @@ int InstrEmit_eqvx(PPCHIRBuilder& f, const InstrData& i) {
   Value* ra = f.Not(f.Xor(f.LoadGPR(i.X.RT), f.LoadGPR(i.X.RB)));
   f.StoreGPR(i.X.RA, ra);
   if (i.X.Rc) {
-    f.UpdateCR(0, ra);
+    f.ComputeAndStoreCR(0, ra);
   }
   return 0;
 }
@@ -730,7 +730,7 @@ int InstrEmit_extsbx(PPCHIRBuilder& f, const InstrData& i) {
   rt = f.SignExtend(f.Truncate(rt, INT8_TYPE), INT64_TYPE);
   f.StoreGPR(i.X.RA, rt);
   if (i.X.Rc) {
-    f.UpdateCR(0, rt);
+    f.ComputeAndStoreCR(0, rt);
   }
   return 0;
 }
@@ -743,7 +743,7 @@ int InstrEmit_extshx(PPCHIRBuilder& f, const InstrData& i) {
   rt = f.SignExtend(f.Truncate(rt, INT16_TYPE), INT64_TYPE);
   f.StoreGPR(i.X.RA, rt);
   if (i.X.Rc) {
-    f.UpdateCR(0, rt);
+    f.ComputeAndStoreCR(0, rt);
   }
   return 0;
 }
@@ -756,7 +756,7 @@ int InstrEmit_extswx(PPCHIRBuilder& f, const InstrData& i) {
   rt = f.SignExtend(f.Truncate(rt, INT32_TYPE), INT64_TYPE);
   f.StoreGPR(i.X.RA, rt);
   if (i.X.Rc) {
-    f.UpdateCR(0, rt);
+    f.ComputeAndStoreCR(0, rt);
   }
   return 0;
 }
@@ -766,7 +766,7 @@ int InstrEmit_nandx(PPCHIRBuilder& f, const InstrData& i) {
   Value* ra = f.Not(f.And(f.LoadGPR(i.X.RT), f.LoadGPR(i.X.RB)));
   f.StoreGPR(i.X.RA, ra);
   if (i.X.Rc) {
-    f.UpdateCR(0, ra);
+    f.ComputeAndStoreCR(0, ra);
   }
   return 0;
 }
@@ -776,7 +776,7 @@ int InstrEmit_norx(PPCHIRBuilder& f, const InstrData& i) {
   Value* ra = f.Not(f.Or(f.LoadGPR(i.X.RT), f.LoadGPR(i.X.RB)));
   f.StoreGPR(i.X.RA, ra);
   if (i.X.Rc) {
-    f.UpdateCR(0, ra);
+    f.ComputeAndStoreCR(0, ra);
   }
   return 0;
 }
@@ -796,7 +796,7 @@ int InstrEmit_orx(PPCHIRBuilder& f, const InstrData& i) {
   }
   f.StoreGPR(i.X.RA, ra);
   if (i.X.Rc) {
-    f.UpdateCR(0, ra);
+    f.ComputeAndStoreCR(0, ra);
   }
   return 0;
 }
@@ -806,7 +806,7 @@ int InstrEmit_orcx(PPCHIRBuilder& f, const InstrData& i) {
   Value* ra = f.Or(f.LoadGPR(i.X.RT), f.Not(f.LoadGPR(i.X.RB)));
   f.StoreGPR(i.X.RA, ra);
   if (i.X.Rc) {
-    f.UpdateCR(0, ra);
+    f.ComputeAndStoreCR(0, ra);
   }
   return 0;
 }
@@ -835,7 +835,7 @@ int InstrEmit_xorx(PPCHIRBuilder& f, const InstrData& i) {
   Value* ra = f.Xor(f.LoadGPR(i.X.RT), f.LoadGPR(i.X.RB));
   f.StoreGPR(i.X.RA, ra);
   if (i.X.Rc) {
-    f.UpdateCR(0, ra);
+    f.ComputeAndStoreCR(0, ra);
   }
   return 0;
 }
@@ -877,7 +877,7 @@ int InstrEmit_rldclx(PPCHIRBuilder& f, const InstrData& i) {
 
   f.StoreGPR(i.MDS.RA, v);
   if (i.MDS.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -902,7 +902,7 @@ int InstrEmit_rldcrx(PPCHIRBuilder& f, const InstrData& i) {
 
   f.StoreGPR(i.MDS.RA, v);
   if (i.MDS.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -935,7 +935,7 @@ int InstrEmit_rldiclx(PPCHIRBuilder& f, const InstrData& i) {
   }
   f.StoreGPR(i.MD.RA, v);
   if (i.MD.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -963,7 +963,7 @@ int InstrEmit_rldicrx(PPCHIRBuilder& f, const InstrData& i) {
   }
   f.StoreGPR(i.MD.RA, v);
   if (i.MD.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -988,7 +988,7 @@ int InstrEmit_rldimix(PPCHIRBuilder& f, const InstrData& i) {
   }
   f.StoreGPR(i.MD.RA, v);
   if (i.MD.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -1013,7 +1013,7 @@ int InstrEmit_rlwimix(PPCHIRBuilder& f, const InstrData& i) {
   v = f.Or(v, f.And(f.LoadGPR(i.M.RA), f.LoadConstantUint64(~m)));
   f.StoreGPR(i.M.RA, v);
   if (i.M.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -1044,7 +1044,7 @@ int InstrEmit_rlwinmx(PPCHIRBuilder& f, const InstrData& i) {
   }
   f.StoreGPR(i.M.RA, v);
   if (i.M.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -1063,7 +1063,7 @@ int InstrEmit_rlwnmx(PPCHIRBuilder& f, const InstrData& i) {
   v = f.And(v, f.LoadConstantUint64(XEMASK(i.M.MB + 32, i.M.ME + 32)));
   f.StoreGPR(i.M.RA, v);
   if (i.M.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -1084,7 +1084,7 @@ int InstrEmit_sldx(PPCHIRBuilder& f, const InstrData& i) {
                       f.Shl(f.LoadGPR(i.X.RT), sh));
   f.StoreGPR(i.X.RA, v);
   if (i.X.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -1104,7 +1104,7 @@ int InstrEmit_slwx(PPCHIRBuilder& f, const InstrData& i) {
   v = f.ZeroExtend(v, INT64_TYPE);
   f.StoreGPR(i.X.RA, v);
   if (i.X.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -1123,7 +1123,7 @@ int InstrEmit_srdx(PPCHIRBuilder& f, const InstrData& i) {
                       f.LoadZeroInt64(), f.Shr(f.LoadGPR(i.X.RT), sh));
   f.StoreGPR(i.X.RA, v);
   if (i.X.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -1144,7 +1144,7 @@ int InstrEmit_srwx(PPCHIRBuilder& f, const InstrData& i) {
   v = f.ZeroExtend(v, INT64_TYPE);
   f.StoreGPR(i.X.RA, v);
   if (i.X.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -1173,7 +1173,7 @@ int InstrEmit_sradx(PPCHIRBuilder& f, const InstrData& i) {
 
   f.StoreGPR(i.X.RA, v);
   if (i.X.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -1205,7 +1205,7 @@ int InstrEmit_sradix(PPCHIRBuilder& f, const InstrData& i) {
 
   f.StoreGPR(i.XS.RA, v);
   if (i.XS.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -1234,7 +1234,7 @@ int InstrEmit_srawx(PPCHIRBuilder& f, const InstrData& i) {
   v = f.SignExtend(v, INT64_TYPE);
   f.StoreGPR(i.X.RA, v);
   if (i.X.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
@@ -1266,7 +1266,7 @@ int InstrEmit_srawix(PPCHIRBuilder& f, const InstrData& i) {
   f.StoreCA(ca);
   f.StoreGPR(i.X.RA, v);
   if (i.X.Rc) {
-    f.UpdateCR(0, v);
+    f.ComputeAndStoreCR(0, v);
   }
   return 0;
 }
