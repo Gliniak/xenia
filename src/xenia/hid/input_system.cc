@@ -26,6 +26,18 @@ void InputSystem::AddDriver(std::unique_ptr<InputDriver> driver) {
   drivers_.push_back(std::move(driver));
 }
 
+void InputSystem::UpdateUsedSlot(uint8_t slot, bool connected) {
+  if (slot == 0xFF) {
+    slot = 0;
+  }
+
+  if (connected) {
+    connected_slot |= (1 << slot);
+  } else {
+    connected_slot &= ~(1 << slot);
+  }
+}
+
 X_RESULT InputSystem::GetCapabilities(uint32_t user_index, uint32_t flags,
                                       X_INPUT_CAPABILITIES* out_caps) {
   SCOPE_profile_cpu_f("hid");
@@ -53,9 +65,11 @@ X_RESULT InputSystem::GetState(uint32_t user_index, X_INPUT_STATE* out_state) {
       any_connected = true;
     }
     if (result == X_ERROR_SUCCESS) {
+      UpdateUsedSlot(user_index, any_connected);
       return result;
     }
   }
+  UpdateUsedSlot(user_index, any_connected);
   return any_connected ? X_ERROR_EMPTY : X_ERROR_DEVICE_NOT_CONNECTED;
 }
 
@@ -70,9 +84,11 @@ X_RESULT InputSystem::SetState(uint32_t user_index,
       any_connected = true;
     }
     if (result == X_ERROR_SUCCESS) {
+      UpdateUsedSlot(user_index, any_connected);
       return result;
     }
   }
+  UpdateUsedSlot(user_index, any_connected);
   return any_connected ? X_ERROR_EMPTY : X_ERROR_DEVICE_NOT_CONNECTED;
 }
 
