@@ -23,6 +23,7 @@
 #include "xenia/memory.h"
 #include "xenia/vfs/virtual_file_system.h"
 #include "xenia/xbox.h"
+#include "xenia/apu/audio_media_player.h"
 
 namespace xe {
 namespace apu {
@@ -134,6 +135,10 @@ class Emulator {
   // Audio hardware emulation for decoding and playback.
   apu::AudioSystem* audio_system() const { return audio_system_.get(); }
 
+  apu::AudioMediaPlayer* audio_media_player() const {
+    return audio_media_player_.get();
+  }
+
   // GPU emulation for command list processing.
   gpu::GraphicsSystem* graphics_system() const {
     return graphics_system_.get();
@@ -232,6 +237,7 @@ class Emulator {
 
   std::unique_ptr<cpu::Processor> processor_;
   std::unique_ptr<apu::AudioSystem> audio_system_;
+  std::unique_ptr<apu::AudioMediaPlayer> audio_media_player_;
   std::unique_ptr<gpu::GraphicsSystem> graphics_system_;
   std::unique_ptr<hid::InputSystem> input_system_;
 

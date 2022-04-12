@@ -8,6 +8,9 @@
  */
 
 #include "xenia/kernel/xam/apps/xmp_app.h"
+#include "xenia/apu/audio_media_player.h"
+#include "xenia/apu/audio_system.h"
+#include "xenia/emulator.h"
 #include "xenia/kernel/xthread.h"
 
 #include "xenia/base/logging.h"
@@ -97,6 +100,9 @@ X_HRESULT XmpApp::XMPCreateTitlePlaylist(
   auto global_lock = global_critical_region_.Acquire();
   playlists_.insert({playlist->handle, playlist.get()});
   playlist.release();
+
+  kernel_state_->emulator()->audio_media_player()->LoadPlaylist();
+
   return X_E_SUCCESS;
 }
 
@@ -143,6 +149,7 @@ X_HRESULT XmpApp::XMPPlayTitlePlaylist(uint32_t playlist_handle,
   state_ = State::kPlaying;
   OnStateChanged();
   kernel_state_->BroadcastNotification(kMsgPlaybackBehaviorChanged, 1);
+  kernel_state_->emulator()->audio_media_player()->Play();
   return X_E_SUCCESS;
 }
 
@@ -152,6 +159,7 @@ X_HRESULT XmpApp::XMPContinue() {
     state_ = State::kPlaying;
   }
   OnStateChanged();
+  kernel_state_->emulator()->audio_media_player()->Play();
   return X_E_SUCCESS;
 }
 
@@ -162,6 +170,7 @@ X_HRESULT XmpApp::XMPStop(uint32_t unk) {
   active_song_index_ = 0;
   state_ = State::kIdle;
   OnStateChanged();
+  kernel_state_->emulator()->audio_media_player()->Stop();
   return X_E_SUCCESS;
 }
 
@@ -171,6 +180,7 @@ X_HRESULT XmpApp::XMPPause() {
     state_ = State::kPaused;
   }
   OnStateChanged();
+  kernel_state_->emulator()->audio_media_player()->Pause();
   return X_E_SUCCESS;
 }
 
