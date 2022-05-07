@@ -12,8 +12,14 @@
 #include <sstream>
 
 #include "third_party/fmt/include/fmt/format.h"
+#include "xenia/base/cvar.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
+
+// Need to use DEFINE_string instead of DEFINE_uint64, as uint64 errors with too
+// large numbers...
+DEFINE_string(profile_id, "B13EBABEBABEBABE",
+              "Profile ID to use for games & save packages", "Content");
 
 namespace xe {
 namespace kernel {
@@ -23,7 +29,7 @@ UserProfile::UserProfile() {
   // 58410A1F checks the user XUID against a mask of 0x00C0000000000000 (3<<54),
   // if non-zero, it prevents the user from playing the game.
   // "You do not have permissions to perform this operation."
-  xuid_ = 0xB13EBABEBABEBABE;
+  xuid_ = std::stoull(cvars::profile_id, nullptr, 16);
   name_ = "User";
 
   // https://cs.rin.ru/forum/viewtopic.php?f=38&t=60668&hilit=gfwl+live&start=195

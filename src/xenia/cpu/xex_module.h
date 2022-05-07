@@ -142,7 +142,9 @@ class XexModule : public xe::cpu::Module {
   uint32_t GetProcAddress(uint16_t ordinal) const;
   uint32_t GetProcAddress(const std::string_view name) const;
 
+  bool IsPatchApplicable(XexModule* module);
   int ApplyPatch(XexModule* module);
+
   bool Load(const std::string_view name, const std::string_view path,
             const void* xex_addr, size_t xex_length);
   bool LoadContinue();

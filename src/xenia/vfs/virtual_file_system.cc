@@ -78,6 +78,20 @@ bool VirtualFileSystem::FindSymbolicLink(const std::string_view path,
   return true;
 }
 
+bool VirtualFileSystem::UpdateSymbolicLink(const std::string_view path,
+                                           const std::string_view target) {
+  auto global_lock = global_critical_region_.Acquire();
+  auto it = std::find_if(
+      symlinks_.begin(), symlinks_.end(),
+      [&](const auto& s) { return xe::utf8::starts_with_case(path, s.first); });
+  if (it == symlinks_.cend()) {
+    return false;
+  }
+  it->second = target;
+  XELOGD("Updated symbolic link: {} => {}", path, target);
+  return true;
+}
+
 bool VirtualFileSystem::ResolveSymbolicLink(const std::string_view path,
                                             std::string& result) {
   result = path;
@@ -128,6 +142,17 @@ Entry* VirtualFileSystem::ResolvePath(const std::string_view path) {
   const auto& device = *it;
   auto relative_path = normalized_path.substr(device->mount_path().size());
   return device->ResolvePath(relative_path);
+}
+
+Device* VirtualFileSystem::ResolveDevice(const std::string_view path) {
+  auto global_lock = global_critical_region_.Acquire();
+  for (auto it = devices_.begin(); it != devices_.end(); ++it) {
+    if ((*it)->mount_path() == path) {
+      return (*it).get();
+    }
+  }
+  XELOGE("ResolveDevice({}) failed - device not found", path);
+  return nullptr;
 }
 
 Entry* VirtualFileSystem::CreatePath(const std::string_view path,

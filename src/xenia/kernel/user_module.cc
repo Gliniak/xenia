@@ -22,6 +22,9 @@
 
 DEFINE_bool(xex_apply_patches, true, "Apply XEX patches.", "Kernel");
 
+// Root name to mount update packages to, games seem to check update:
+static const std::string kUpdatePartition = "update";
+
 namespace xe {
 namespace kernel {
 
@@ -51,9 +54,10 @@ uint32_t UserModule::title_id() const {
 X_STATUS UserModule::LoadFromFile(const std::string_view path) {
   X_STATUS result = X_STATUS_UNSUCCESSFUL;
 
+  auto fs = kernel_state()->file_system();
   // Resolve the file to open.
   // TODO(benvanik): make this code shared?
-  auto fs_entry = kernel_state()->file_system()->ResolvePath(path);
+  auto fs_entry = fs->ResolvePath(path);
   if (!fs_entry) {
     XELOGE("File not found: {}", path);
     return X_STATUS_NO_SUCH_FILE;
@@ -102,33 +106,201 @@ X_STATUS UserModule::LoadFromFile(const std::string_view path) {
     return result;
   }
 
-  if (cvars::xex_apply_patches) {
-    // Search for xexp patch file
-    auto patch_entry = kernel_state()->file_system()->ResolvePath(path_ + "p");
+  if (!kernel_state()->title_id()) {
+    // Try setting title ID from this module, for ContentManager to work with
+    // our title
+    xex2_opt_execution_info* exec_info = nullptr;
+    xex_module()->GetOptHeader(XEX_HEADER_EXECUTION_INFO, &exec_info);
+    if (exec_info) {
+      kernel_state()->set_title_id(exec_info->title_id);
+    }
+  }
 
-    if (patch_entry) {
-      auto patch_path = patch_entry->absolute_path();
+  if (!cvars::xex_apply_patches) {
+    // XEX patches disabled, skip trying to load them
+    return LoadXexContinue();
+  }
 
-      XELOGI("Loading XEX patch from {}", patch_path);
+  auto module_path = fs_entry->path();
+  TryMountUpdatePackage(module_path);
 
-      auto patch_module = object_ref<UserModule>(new UserModule(kernel_state_));
-      result = patch_module->LoadFromFile(patch_path);
-      if (!result) {
-        result = patch_module->xex_module()->ApplyPatch(xex_module());
-        if (result) {
-          XELOGE("Failed to apply XEX patch, code: {}", result);
-        }
-      } else {
-        XELOGE("Failed to load XEX patch, code: {}", result);
-      }
+  // Search for xexp patch file, first check if it exists at update:\ root
+  auto patch_entry =
+      fs->ResolvePath(kUpdatePartition + ":\\" + module_path + "p");
+  if (!patch_entry) {
+    // Try checking next to XEX itself
+    auto patch_entry = fs->ResolvePath(path_ + "p");
+  }
 
+  if (patch_entry) {
+    auto patch_path = patch_entry->absolute_path();
+
+    XELOGI("Loading XEX patch from {}", patch_path);
+
+    auto patch_module = object_ref<UserModule>(new UserModule(kernel_state_));
+    result = patch_module->LoadFromFile(patch_path);
+    if (!result) {
+      result = patch_module->xex_module()->ApplyPatch(xex_module());
       if (result) {
-        return X_STATUS_UNSUCCESSFUL;
+        XELOGE("Failed to apply XEX patch, code: {}", result);
       }
+    } else {
+      XELOGE("Failed to load XEX patch, code: {}", result);
+    }
+
+    if (result) {
+      return X_STATUS_UNSUCCESSFUL;
     }
   }
 
   return LoadXexContinue();
+}
+
+bool UserModule::TryMountUpdatePackage(const std::string& module_path) {
+  auto fs = kernel_state()->file_system();
+
+  std::string unused;
+  if (fs->FindSymbolicLink(kUpdatePartition + ":", unused)) {
+    return false;  // Already have an update package mounted
+  }
+
+  // No update package currently loaded, check if we have any that are
+  // applicable
+
+  // Executable module likely hasn't been setup yet (depends if this is the
+  // first module loaded or not), so we'll probably need to grab title ID from
+  // execution info header & set content_manager override
+
+  xex2_opt_execution_info* exec_info = nullptr;
+  xex_module()->GetOptHeader(XEX_HEADER_EXECUTION_INFO, &exec_info);
+
+  xex2_opt_execution_info* exec_module_info = nullptr;
+  auto exe_module = kernel_state()->GetExecutableModule();
+  if (exe_module) {
+    exe_module->GetOptHeader(XEX_HEADER_EXECUTION_INFO, &exec_module_info);
+  }
+
+  auto content_manager = kernel_state()->content_manager();
+
+  auto update_packages =
+      content_manager->ListContent(0, XContentType::kInstaller);
+
+  auto stfs_header = std::make_unique<vfs::StfsHeader>();
+
+  for (auto& update : update_packages) {
+    XELOGD("Checking if TU {} is applicable...", update.file_name());
+    auto result = content_manager->OpenContent(kUpdatePartition, update);
+
+    if (XFAILED(result)) {
+      XELOGE("Failed to open TU package {} for reading!", update.file_name());
+      assert_always();
+      continue;
+    }
+
+    // First try checking if patch exists under discXXX folder
+    uint8_t disc_num = 0;
+    if (exec_info) {
+      disc_num = exec_info->disc_number;
+    }
+
+    // If we have one, get disc num from the loaded executable module
+    // instead of this module
+    // (is likely more accurate than this module, eg. we might be a DLL that
+    // has no exec_info)
+    if (exec_module_info) {
+      disc_num = exec_module_info->disc_number;
+    }
+
+    auto xexp_root = fmt::format("disc{:03}\\", disc_num);
+    auto xexp_path = kUpdatePartition + ":\\" + xexp_root + module_path + "p";
+    bool remap_symlink = true;  // set symlink to xexp_root
+
+    vfs::Entry* xexp_entry = fs->ResolvePath(xexp_path);
+    if (!xexp_entry) {
+      // Not inside disc000 folder, try root of package
+      xexp_root = "";
+      xexp_path = kUpdatePartition + ":\\" + module_path + "p";
+      remap_symlink = false;
+
+      xexp_entry = fs->ResolvePath(xexp_path);
+    }
+
+    if (!xexp_entry) {
+      // XEXP/DLLP doesn't exist in this package, skip this package
+
+      XELOGW("Failed to locate {}p inside TU package", module_path);
+      content_manager->CloseContent(kUpdatePartition);
+      continue;
+    }
+
+    // XEXP located - check contents
+    auto xexp_module = std::make_unique<cpu::XexModule>(
+        kernel_state()->processor(), kernel_state());
+
+    // Read XEXP contents into memory
+    std::vector<uint8_t> xexp_data(xexp_entry->size());
+
+    // Open file for reading.
+    vfs::File* xexp_file = nullptr;
+    result = xexp_entry->Open(vfs::FileAccess::kGenericRead, &xexp_file);
+    if (XFAILED(result)) {
+      XELOGE("Failed to open {}p inside TU package", module_path);
+      assert_always();
+      content_manager->CloseContent(kUpdatePartition);
+      return result;
+    }
+
+    // Read entire file into memory.
+    size_t bytes_read = 0;
+    result =
+        xexp_file->ReadSync(xexp_data.data(), xexp_data.size(), 0, &bytes_read);
+    if (XFAILED(result)) {
+      XELOGE("Failed to read {}p inside TU package", module_path);
+      assert_always();
+      content_manager->CloseContent(kUpdatePartition);
+      return result;
+    }
+
+    // Close the file.
+    xexp_file->Destroy();
+
+    // Load XEXP module using xex_length = 0 as we only want headers
+    if (!xexp_module->Load(module_path + "p", xexp_root, xexp_data.data(), 0)) {
+      XELOGE("Failed to load {}p module", module_path);
+      assert_always();
+      content_manager->CloseContent(kUpdatePartition);
+      continue;
+    }
+
+    if (!xexp_module->IsPatchApplicable(xex_module())) {
+      XELOGD("TU {}p isn't applicable to the loaded XEX");
+      content_manager->CloseContent(kUpdatePartition);
+      continue;
+    }
+
+    // If XEXP is inside a discXXX folder we need to remap update:\ to there
+    if (remap_symlink) {
+      auto fs = kernel_state()->file_system();
+      std::string sym_target;
+
+      bool symlink_updated = false;
+      if (fs->FindSymbolicLink(kUpdatePartition + ":", sym_target)) {
+        symlink_updated = fs->UpdateSymbolicLink(kUpdatePartition + ":",
+                                                 sym_target + xexp_root);
+      }
+
+      if (!symlink_updated) {
+        XELOGE("Failed to remap {}:\\ to new root {}!", kUpdatePartition,
+               xexp_root);
+        assert_always();
+      }
+    }
+
+    XELOGD("TU package seems applicable!");
+    return true;
+  }
+
+  return false;
 }
 
 X_STATUS UserModule::LoadFromMemory(const void* addr, const size_t length) {

@@ -324,6 +324,61 @@ static_assert_size(X_EXCEPTION_RECORD, 0x50);
 
 #pragma pack(pop)
 
+typedef struct {
+  uint8_t public_exponent[4];
+  uint8_t modulus[0x80];
+} X_CONSOLE_PUBLIC_KEY;
+static_assert_size(X_CONSOLE_PUBLIC_KEY, 0x84);
+
+enum class XConsoleType : uint32_t {
+  Invalid = 0,
+  Devkit = 1,
+  Retail = 2,
+  Testkit = 0x40000001,
+  RecoveredDevkit = 0x80000001
+};
+
+typedef struct {
+  be<uint16_t> cert_size;
+  uint8_t console_id[5];
+  uint8_t console_partnumber[11];
+  uint8_t reserved[4];
+  be<uint16_t> privileges;
+  be<XConsoleType> console_type;
+  uint8_t manufacture_date[8];
+  X_CONSOLE_PUBLIC_KEY console_publickey;
+  uint8_t signature[0x100];
+} X_XE_CONSOLE_CERTIFICATE;
+static_assert_size(X_XE_CONSOLE_CERTIFICATE, 0x1A8);
+
+typedef struct {
+  X_XE_CONSOLE_CERTIFICATE console_certificate;
+  uint8_t signature[0x80];
+} X_XE_CONSOLE_SIGNATURE;
+static_assert_size(X_XE_CONSOLE_SIGNATURE, 0x228);
+
+typedef struct {
+  xe::be<uint32_t> size;  // size of modulus in 8 byte units
+  xe::be<uint32_t> public_exponent;
+  xe::be<uint64_t> pad_8;
+
+  // followed by modulus, followed by any private-key data
+} XECRYPT_RSA;
+static_assert_size(XECRYPT_RSA, 0x10);
+
+struct XECRYPT_AES_STATE {
+  uint8_t keytabenc[11][4][4];  // 0x0
+  uint8_t keytabdec[11][4][4];  // 0xB0
+};
+static_assert_size(XECRYPT_AES_STATE, 0x160);
+
+typedef struct {
+  uint8_t S[256];  // 0x0
+  uint8_t i;       // 0x100
+  uint8_t j;       // 0x101
+} XECRYPT_RC4_STATE;
+static_assert_size(XECRYPT_RC4_STATE, 0x102);
+
 // Found by dumping the kSectionStringTable sections of various games:
 // and the language list at
 // https://free60project.github.io/wiki/Profile_Account/
@@ -380,6 +435,94 @@ enum class XContentType : uint32_t {
   kPodcastVideo = 0x00500000,
   kViralVideo = 0x00600000,
   kCommunityGame = 0x02000000,
+};
+
+enum class XeKey {
+  MANUFACTURING_MODE = 0x0,
+  ALTERNATE_KEY_VAULT = 0x1,
+  RESTRICTED_PRIVILEGES_FLAGS = 0x2,
+  RESERVED_BYTE3 = 0x3,
+  ODD_FEATURES = 0x4,
+  ODD_AUTHTYPE = 0x5,
+  RESTRICTED_HVEXT_LOADER = 0x6,
+  POLICY_FLASH_SIZE = 0x7,
+  POLICY_BUILTIN_USBMU_SIZE = 0x8,
+  RESERVED_DWORD4 = 0x9,
+  RESTRICTED_PRIVILEGES = 0xA,
+  RESERVED_QWORD2 = 0xB,
+  RESERVED_QWORD3 = 0xC,
+  RESERVED_QWORD4 = 0xD,
+  RESERVED_KEY1 = 0xE,
+  RESERVED_KEY2 = 0xF,
+  RESERVED_KEY3 = 0x10,
+  RESERVED_KEY4 = 0x11,
+  RESERVED_RANDOM_KEY1 = 0x12,
+  RESERVED_RANDOM_KEY2 = 0x13,
+  CONSOLE_SERIAL_NUMBER = 0x14,
+  MOBO_SERIAL_NUMBER = 0x15,
+  GAME_REGION = 0x16,
+  CONSOLE_OBFUSCATION_KEY = 0x17,
+  KEY_OBFUSCATION_KEY = 0x18,
+  ROAMABLE_OBFUSCATION_KEY = 0x19,
+  DVD_KEY = 0x1A,
+  PRIMARY_ACTIVATION_KEY = 0x1B,
+  SECONDARY_ACTIVATION_KEY = 0x1C,
+  GLOBAL_DEVICE_2DES_KEY1 = 0x1D,
+  GLOBAL_DEVICE_2DES_KEY2 = 0x1E,
+  WIRELESS_CONTROLLER_MS_2DES_KEY1 = 0x1F,
+  WIRELESS_CONTROLLER_MS_2DES_KEY2 = 0x20,
+  WIRED_WEBCAM_MS_2DES_KEY1 = 0x21,
+  WIRED_WEBCAM_MS_2DES_KEY2 = 0x22,
+  WIRED_CONTROLLER_MS_2DES_KEY1 = 0x23,
+  WIRED_CONTROLLER_MS_2DES_KEY2 = 0x24,
+  MEMORY_UNIT_MS_2DES_KEY1 = 0x25,
+  MEMORY_UNIT_MS_2DES_KEY2 = 0x26,
+  OTHER_XSM3_DEVICE_MS_2DES_KEY1 = 0x27,
+  OTHER_XSM3_DEVICE_MS_2DES_KEY2 = 0x28,
+  WIRELESS_CONTROLLER_3P_2DES_KEY1 = 0x29,
+  WIRELESS_CONTROLLER_3P_2DES_KEY2 = 0x2A,
+  WIRED_WEBCAM_3P_2DES_KEY1 = 0x2B,
+  WIRED_WEBCAM_3P_2DES_KEY2 = 0x2C,
+  WIRED_CONTROLLER_3P_2DES_KEY1 = 0x2D,
+  WIRED_CONTROLLER_3P_2DES_KEY2 = 0x2E,
+  MEMORY_UNIT_3P_2DES_KEY1 = 0x2F,
+  MEMORY_UNIT_3P_2DES_KEY2 = 0x30,
+  OTHER_XSM3_DEVICE_3P_2DES_KEY1 = 0x31,
+  OTHER_XSM3_DEVICE_3P_2DES_KEY2 = 0x32,
+  CONSOLE_PRIVATE_KEY = 0x33,
+  XEIKA_PRIVATE_KEY = 0x34,
+  CARDEA_PRIVATE_KEY = 0x35,
+  CONSOLE_CERTIFICATE = 0x36,
+  XEIKA_CERTIFICATE = 0x37,
+  CARDEA_CERTIFICATE = 0x38,
+  MAX_KEY_INDEX = 0x39,
+
+  CONSTANT_PIRS_KEY = 0x39,
+  CONSTANT_ALT_MASTER_KEY = 0x3A,
+  CONSTANT_ALT_LIVE_KEY = 0x3B,
+  CONSTANT_MASTER_KEY = 0x3C,
+  CONSTANT_LIVE_KEY = 0x3D,
+  CONSTANT_XB1_GREEN_KEY = 0x3E,
+  CONSTANT_SATA_DISK_SECURITY_KEY = 0x3F,
+  CONSTANT_DEVICE_REVOCATION_KEY = 0x40,
+  CONSTANT_XMACS_KEY = 0x41,
+  CONSTANT_REVOCATION_LIST_NONCE = 0x42,
+  CONSTANT_CROSS_PLATFORM_SYSLINK_KEY = 0x43,
+
+  SPECIAL_KEY_VAULT_SIGNATURE = 0x44,
+  SPECIAL_SECROM_DIGEST = 0x45,
+  SPECIAL_SECDATA = 0x46,
+  SPECIAL_DVD_FIRMWARE_KEY = 0x47,
+  SPECIAL_DEBUG_UNLOCK = 0x48,
+  SPECIAL_DEBUG_UNLOCK_STATE = 0x49,
+  MAX_CONSTANT_INDEX = 0x4A,
+
+  TITLE_KEYS_BASE = 0xE0,
+  TITLE_KEYS_LIMIT = 0xE8,
+  TITLE_KEYS_RESET = 0xF0,
+
+  SECURED_DATA_BASE = 0x1000,
+  SECURED_DATA_LIMIT = 0x2000,
 };
 
 }  // namespace xe

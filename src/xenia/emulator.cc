@@ -772,43 +772,6 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     }
   }
 
-  // Try and load the resource database (xex only).
-  if (module->title_id()) {
-    auto title_id = fmt::format("{:08X}", module->title_id());
-
-    // Load the per-game configuration file and make sure updates are handled by
-    // the callbacks.
-    config::LoadGameConfig(title_id);
-    assert_true(game_config_load_callback_loop_next_index_ == SIZE_MAX);
-    game_config_load_callback_loop_next_index_ = 0;
-    while (game_config_load_callback_loop_next_index_ <
-           game_config_load_callbacks_.size()) {
-      game_config_load_callbacks_[game_config_load_callback_loop_next_index_++]
-          ->PostGameConfigLoad();
-    }
-    game_config_load_callback_loop_next_index_ = SIZE_MAX;
-
-    uint32_t resource_data = 0;
-    uint32_t resource_size = 0;
-    if (XSUCCEEDED(module->GetSection(title_id.c_str(), &resource_data,
-                                      &resource_size))) {
-      kernel::util::XdbfGameData db(
-          module->memory()->TranslateVirtual(resource_data), resource_size);
-      if (db.is_valid()) {
-        // TODO(gibbed): get title respective to user locale.
-        title_name_ = db.title(XLanguage::kEnglish);
-        if (title_name_.empty()) {
-          // If English title is unavailable, get the title in default locale.
-          title_name_ = db.title();
-        }
-        auto icon_block = db.icon();
-        if (icon_block) {
-          display_window_->SetIcon(icon_block.buffer, icon_block.size);
-        }
-      }
-    }
-  }
-
   // Initializing the shader storage in a blocking way so the user doesn't miss
   // the initial seconds - for instance, sound from an intro video may start
   // playing before the video can be seen if doing this in parallel with the
@@ -822,6 +785,19 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
   if (!main_thread) {
     return X_STATUS_UNSUCCESSFUL;
   }
+
+  // Try and read title info
+  if (title_id_.has_value() && title_id_.value()) {
+    auto title_id = fmt::format("{:08X}", title_id_.value());
+    config::LoadGameConfig(title_id);
+
+    title_name_ = kernel_state()->title_name();
+    auto icon_block = kernel_state()->title_icon();
+    if (icon_block) {
+      display_window_->SetIcon(icon_block.buffer, icon_block.size);
+    }
+  }
+
   main_thread_ = main_thread;
   on_launch(title_id_.value(), title_name_);
 

@@ -36,12 +36,19 @@ namespace xe {
 namespace kernel {
 namespace xboxkrnl {
 
-typedef struct {
-  uint8_t S[256];  // 0x0
-  uint8_t i;       // 0x100
-  uint8_t j;       // 0x101
-} XECRYPT_RC4_STATE;
-static_assert_size(XECRYPT_RC4_STATE, 0x102);
+// Value used by x360 for 1024-bit private exponent / 'D' param
+uint8_t kStaticPrivateExponent1024[] = {
+    0x51, 0xEC, 0x1F, 0x9D, 0x56, 0x26, 0xC2, 0xFC, 0x10, 0xA6, 0x67, 0x64,
+    0xCB, 0x3A, 0x6D, 0x4D, 0xA1, 0xE7, 0x4E, 0xA8, 0x42, 0xF0, 0xF4, 0xFD,
+    0xFA, 0x66, 0xEF, 0xC7, 0x8E, 0x10, 0x2F, 0xE4, 0x1C, 0xA3, 0x1D, 0xD0,
+    0xCE, 0x39, 0x2E, 0xC3, 0x19, 0x2D, 0xD0, 0x58, 0x74, 0x79, 0xAC, 0x08,
+    0xE7, 0x90, 0xC1, 0xAC, 0x2D, 0xC6, 0xEB, 0x47, 0xE8, 0x3D, 0xCF, 0x4C,
+    0x6D, 0xFF, 0x51, 0x65, 0xD4, 0x6E, 0xBD, 0x0F, 0x15, 0x79, 0x37, 0x95,
+    0xC4, 0xAF, 0x90, 0x9E, 0x2B, 0x50, 0x8A, 0x0A, 0x22, 0x4A, 0xB3, 0x41,
+    0xE5, 0x89, 0x80, 0x73, 0xCD, 0xFA, 0x21, 0x02, 0xF5, 0xDD, 0x30, 0xDD,
+    0x07, 0x2A, 0x6F, 0x34, 0x07, 0x81, 0x97, 0x7E, 0xB2, 0xFB, 0x72, 0xE9,
+    0xEA, 0xC1, 0x88, 0x39, 0xAC, 0x48, 0x2B, 0xA8, 0x4D, 0xFC, 0xD7, 0xED,
+    0x9B, 0xF9, 0xDE, 0xC2, 0x45, 0x93, 0x4C, 0x4C};
 
 void XeCryptRc4Key_entry(pointer_t<XECRYPT_RC4_STATE> rc4_ctx, lpvoid_t key,
                          dword_t key_size) {
@@ -232,14 +239,172 @@ void XeCryptBnQw_SwapDwQwLeBe_entry(pointer_t<uint64_t> qw_inp,
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptBnQw_SwapDwQwLeBe, kNone, kImplemented);
 
-typedef struct {
-  xe::be<uint32_t> size;  // size of modulus in 8 byte units
-  xe::be<uint32_t> public_exponent;
-  xe::be<uint64_t> pad_8;
+dword_result_t XeCryptBnQwNeRsaPrvCrypt_entry(pointer_t<uint64_t> qw_a,
+                                        pointer_t<uint64_t> qw_b,
+                                        pointer_t<XECRYPT_RSA> rsa) {
+  // 0 indicates failure (but not a BOOL return value)
+#ifndef XE_PLATFORM_WIN32
+  XELOGE(
+      "XeCryptBnQwNeRsaPrvCrypt called but no implementation available for "
+      "this platform!");
+  assert_always();
+  return 1;
+#else
+  uint32_t key_digits = rsa->size;
 
-  // followed by modulus, followed by any private-key data
-} XECRYPT_RSA;
-static_assert_size(XECRYPT_RSA, 0x10);
+  if (key_digits <= 0 || key_digits > 0x40) {
+    return false;  // too large
+  }
+
+  // TODO: we only have PrivExp/'D' value for 1024-bit keys right now
+  // It should be possible to calculate it though, if we had some support for
+  // big numbers
+  if (key_digits != 0x10) {
+    return false;
+  }
+
+  uint32_t modulus_size = key_digits * 8;
+  uint32_t prime_count = key_digits / 2;
+  uint32_t prime_size = prime_count * 8;
+
+  // Convert XECRYPT blob into BCrypt format
+  ULONG key_size = sizeof(BCRYPT_RSAKEY_BLOB) + sizeof(uint32_t) +  // exponent
+                   modulus_size +                                   // modulus
+                   prime_size +                                     // prime1
+                   prime_size +                                     // prime2
+                   prime_size +                                     // exponent1
+                   prime_size +                                     // exponent2
+                   prime_size +   // coefficient
+                   modulus_size;  // private exponent / 'D'
+  auto key_buf = std::make_unique<uint8_t[]>(key_size);
+  auto* key_header = reinterpret_cast<BCRYPT_RSAKEY_BLOB*>(key_buf.get());
+
+  key_header->Magic = BCRYPT_RSAFULLPRIVATE_MAGIC;
+  key_header->BitLength = modulus_size * 8;
+  key_header->cbPublicExp = sizeof(uint32_t);
+  key_header->cbModulus = modulus_size;
+  key_header->cbPrime1 = key_header->cbPrime2 = prime_size;
+
+  // Copy in exponent/modulus, luckily these are BE inside BCrypt blob
+  uint32_t* key_exponent = reinterpret_cast<uint32_t*>(&key_header[1]);
+  *key_exponent = rsa->public_exponent.value;
+
+  // ...except modulus needs to be reversed in 64-bit chunks for BCrypt to make
+  // use of it properly for some reason
+  uint64_t* key_modulus = reinterpret_cast<uint64_t*>(&key_exponent[1]);
+  const uint64_t* xecrypt_modulus = reinterpret_cast<const uint64_t*>(&rsa[1]);
+  std::reverse_copy(xecrypt_modulus, xecrypt_modulus + key_digits, key_modulus);
+
+  uint64_t* key_prime1 = reinterpret_cast<uint64_t*>(&key_modulus[key_digits]);
+  const uint64_t* xecrypt_prime1 =
+      reinterpret_cast<const uint64_t*>(&xecrypt_modulus[key_digits]);
+
+  std::reverse_copy(xecrypt_prime1, xecrypt_prime1 + (prime_count), key_prime1);
+
+  uint64_t* key_prime2 = reinterpret_cast<uint64_t*>(&key_prime1[prime_count]);
+  const uint64_t* xecrypt_prime2 =
+      reinterpret_cast<const uint64_t*>(&xecrypt_prime1[prime_count]);
+
+  std::reverse_copy(xecrypt_prime2, xecrypt_prime2 + prime_count, key_prime2);
+
+  uint64_t* key_exponent1 =
+      reinterpret_cast<uint64_t*>(&key_prime2[prime_count]);
+  const uint64_t* xecrypt_exponent1 =
+      reinterpret_cast<const uint64_t*>(&xecrypt_prime2[prime_count]);
+
+  std::reverse_copy(xecrypt_exponent1, xecrypt_exponent1 + prime_count,
+                    key_exponent1);
+
+  uint64_t* key_exponent2 =
+      reinterpret_cast<uint64_t*>(&key_exponent1[prime_count]);
+  const uint64_t* xecrypt_exponent2 =
+      reinterpret_cast<const uint64_t*>(&xecrypt_exponent1[prime_count]);
+
+  std::reverse_copy(xecrypt_exponent2, xecrypt_exponent2 + prime_count,
+                    key_exponent2);
+
+  uint64_t* key_coefficient =
+      reinterpret_cast<uint64_t*>(&key_exponent2[prime_count]);
+  const uint64_t* xecrypt_coefficient =
+      reinterpret_cast<const uint64_t*>(&xecrypt_exponent2[prime_count]);
+
+  std::reverse_copy(xecrypt_coefficient, xecrypt_coefficient + prime_count,
+                    key_coefficient);
+
+  uint64_t* key_privexponent =
+      reinterpret_cast<uint64_t*>(&key_coefficient[prime_count]);
+
+  // X360 uses a static private exponent / "D" value
+  std::memcpy(key_privexponent, kStaticPrivateExponent1024, 0x80);
+
+  BCRYPT_ALG_HANDLE hAlgorithm = NULL;
+  NTSTATUS status = BCryptOpenAlgorithmProvider(
+      &hAlgorithm, BCRYPT_RSA_ALGORITHM, MS_PRIMITIVE_PROVIDER, 0);
+
+  if (!BCRYPT_SUCCESS(status)) {
+    XELOGE(
+        "XeCryptBnQwNeRsaPrvCrypt: BCryptOpenAlgorithmProvider failed with "
+        "status {:#X}!",
+        status);
+    return 0;
+  }
+
+  BCRYPT_KEY_HANDLE hKey = NULL;
+  status = BCryptImportKeyPair(hAlgorithm, NULL, BCRYPT_RSAFULLPRIVATE_BLOB,
+                               &hKey, key_buf.get(), key_size, 0);
+
+  if (!BCRYPT_SUCCESS(status)) {
+    XELOGE(
+        "XeCryptBnQwNeRsaPrvCrypt: BCryptImportKeyPair failed with status "
+        "{:#X}!",
+        status);
+
+    if (hAlgorithm) {
+      BCryptCloseAlgorithmProvider(hAlgorithm, 0);
+    }
+
+    return 0;
+  }
+
+  // Byteswap & reverse the input into output, as BCrypt wants MSB first
+  uint64_t* output = qw_b;
+  uint8_t* output_bytes = reinterpret_cast<uint8_t*>(output);
+  xe::copy_and_swap<uint64_t>(output, qw_a, key_digits);
+  std::reverse(output_bytes, output_bytes + modulus_size);
+
+  // BCryptDecrypt only works with private keys, fortunately BCryptEncrypt
+  // performs the right actions needed for us to decrypt the input
+  ULONG result_size = 0;
+  status =
+      BCryptDecrypt(hKey, output_bytes, modulus_size, nullptr, nullptr, 0,
+                    output_bytes, modulus_size, &result_size, BCRYPT_PAD_NONE);
+
+  assert(result_size == modulus_size);
+
+  if (!BCRYPT_SUCCESS(status)) {
+    XELOGE("XeCryptBnQwNeRsaPrvCrypt: BCryptDecrypt failed with status {:#X}!",
+           status);
+  } else {
+    // Reverse data & byteswap again so data is as game expects
+    std::reverse(output_bytes, output_bytes + modulus_size);
+    xe::copy_and_swap(output, output, key_digits);
+  }
+
+  if (hKey) {
+    BCryptDestroyKey(hKey);
+  }
+  if (hAlgorithm) {
+    BCryptCloseAlgorithmProvider(hAlgorithm, 0);
+  }
+
+  return BCRYPT_SUCCESS(status) ? 1 : 0;
+#endif
+}
+#ifdef XE_PLATFORM_WIN32
+DECLARE_XBOXKRNL_EXPORT1(XeCryptBnQwNeRsaPrvCrypt, kNone, kImplemented);
+#else
+DECLARE_XBOXKRNL_EXPORT1(XeCryptBnQwNeRsaPrvCrypt, kNone, kStub);
+#endif
 
 dword_result_t XeCryptBnQwNeRsaPubCrypt_entry(pointer_t<uint64_t> qw_a,
                                               pointer_t<uint64_t> qw_b,
@@ -252,7 +417,8 @@ dword_result_t XeCryptBnQwNeRsaPubCrypt_entry(pointer_t<uint64_t> qw_a,
   assert_always();
   return 1;
 #else
-  uint32_t modulus_size = rsa->size * 8;
+  uint32_t key_digits = rsa->size;
+  uint32_t modulus_size = key_digits * 8;
 
   // Convert XECRYPT blob into BCrypt format
   ULONG key_size = sizeof(BCRYPT_RSAKEY_BLOB) + sizeof(uint32_t) + modulus_size;
@@ -273,7 +439,7 @@ dword_result_t XeCryptBnQwNeRsaPubCrypt_entry(pointer_t<uint64_t> qw_a,
   // use of it properly for some reason
   uint64_t* key_modulus = reinterpret_cast<uint64_t*>(&key_exponent[1]);
   uint64_t* xecrypt_modulus = reinterpret_cast<uint64_t*>(&rsa[1]);
-  std::reverse_copy(xecrypt_modulus, xecrypt_modulus + rsa->size, key_modulus);
+  std::reverse_copy(xecrypt_modulus, xecrypt_modulus + key_digits, key_modulus);
 
   BCRYPT_ALG_HANDLE hAlgorithm = NULL;
   NTSTATUS status = BCryptOpenAlgorithmProvider(
@@ -307,7 +473,7 @@ dword_result_t XeCryptBnQwNeRsaPubCrypt_entry(pointer_t<uint64_t> qw_a,
   // Byteswap & reverse the input into output, as BCrypt wants MSB first
   uint64_t* output = qw_b;
   uint8_t* output_bytes = reinterpret_cast<uint8_t*>(output);
-  xe::copy_and_swap<uint64_t>(output, qw_a, rsa->size);
+  xe::copy_and_swap<uint64_t>(output, qw_a, key_digits);
   std::reverse(output_bytes, output_bytes + modulus_size);
 
   // BCryptDecrypt only works with private keys, fortunately BCryptEncrypt
@@ -325,7 +491,7 @@ dword_result_t XeCryptBnQwNeRsaPubCrypt_entry(pointer_t<uint64_t> qw_a,
   } else {
     // Reverse data & byteswap again so data is as game expects
     std::reverse(output_bytes, output_bytes + modulus_size);
-    xe::copy_and_swap(output, output, rsa->size);
+    xe::copy_and_swap(output, output, key_digits);
   }
 
   if (hKey) {
@@ -344,10 +510,65 @@ DECLARE_XBOXKRNL_EXPORT1(XeCryptBnQwNeRsaPubCrypt, kNone, kImplemented);
 DECLARE_XBOXKRNL_EXPORT1(XeCryptBnQwNeRsaPubCrypt, kNone, kStub);
 #endif
 
-dword_result_t XeCryptBnDwLePkcs1Verify_entry(lpvoid_t hash, lpvoid_t sig,
-                                              dword_t size) {
-  // BOOL return value
-  return 1;
+uint64_t kPkcs1Format0_0 = 0xE03021A05000414;
+uint64_t kPkcs1Format0_1 = 0x3021300906052B;
+
+uint64_t kPkcs1Format1_0 = 0x052B0E03021A0414;
+uint32_t kPkcs1Format1_1 = 0x1F300706;
+uint16_t kPkcs1Format1_2 = 0x30;
+
+void XeCryptBnDwLePkcs1Format_entry(lpvoid_t hash, dword_t format,
+                              lpvoid_t output_sig, dword_t output_sig_size) {
+  std::memset(output_sig, 0xFF, output_sig_size);
+
+  if (output_sig_size - 39 > 473) return;
+
+  output_sig[output_sig_size - 1] = 0;
+  output_sig[output_sig_size - 2] = 1;
+
+  auto* hash_ptr = reinterpret_cast<uint8_t*>(hash.host_address());
+
+  // Copy reversed-hash into signature
+  std::reverse_copy(hash_ptr, hash_ptr + 0x14,
+                    reinterpret_cast<uint8_t*>(output_sig.host_address()));
+
+  // Append different bytes depending on format
+  switch (format) {
+    case 0:
+      *(uint64_t*)(output_sig + 0x14) = kPkcs1Format0_0;
+      *(uint64_t*)(output_sig + 0x1C) = kPkcs1Format0_1;
+      break;
+    case 1:
+      *(uint64_t*)(output_sig + 0x14) = kPkcs1Format1_0;
+      *(uint32_t*)(output_sig + 0x1C) = kPkcs1Format1_1;
+      *(uint16_t*)(output_sig + 0x20) = kPkcs1Format1_2;
+      break;
+    case 2:
+      output_sig[0x14] = 0;
+  }
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptBnDwLePkcs1Format, kNone, kStub);
+
+dword_result_t XeCryptBnDwLePkcs1Verify_entry(lpvoid_t hash, lpvoid_t input_sig,
+                                        dword_t input_sig_size) {
+  // returns BOOL
+
+  if (input_sig_size - 39 > 473) {
+    return false;
+  }
+
+  // format = 0 if 0x16 == 0
+  // format = 1 if 0x16 == 0x1A
+  // format = 2 if 0x16 != 0x1A
+  uint32_t format = 0;
+  if (input_sig[0x16] != 0) {
+    format = (input_sig[0x16] != 0x1A) ? 2 : 1;
+  }
+
+  auto test_sig = std::make_unique<uint8_t[]>(input_sig_size);
+  XeCryptBnDwLePkcs1Format_entry(hash, format, test_sig.get(), input_sig_size);
+
+  return std::memcmp(test_sig.get(), input_sig, input_sig_size) == 0;
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptBnDwLePkcs1Verify, kNone, kStub);
 
@@ -421,12 +642,6 @@ void XeCryptDes3Cbc_entry(pointer_t<XECRYPT_DES3_STATE> state_ptr,
   *feed = last_block;
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptDes3Cbc, kNone, kImplemented);
-
-struct XECRYPT_AES_STATE {
-  uint8_t keytabenc[11][4][4];  // 0x0
-  uint8_t keytabdec[11][4][4];  // 0xB0
-};
-static_assert_size(XECRYPT_AES_STATE, 0x160);
 
 static inline uint8_t xeXeCryptAesMul2(uint8_t a) {
   return (a & 0x80) ? ((a << 1) ^ 0x1B) : (a << 1);
@@ -600,91 +815,6 @@ void XeCryptHmacSha_entry(lpvoid_t key, dword_t key_size_in, lpvoid_t inp_1,
   std::memcpy(out, digest, std::min((uint32_t)out_size, 0x14u));
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptHmacSha, kNone, kImplemented);
-
-// Keys
-// TODO: Array of keys we need
-
-// Retail key 0x19
-static const uint8_t key19[] = {0xE1, 0xBC, 0x15, 0x9C, 0x73, 0xB1, 0xEA, 0xE9,
-                                0xAB, 0x31, 0x70, 0xF3, 0xAD, 0x47, 0xEB, 0xF3};
-
-dword_result_t XeKeysHmacSha_entry(dword_t key_num, lpvoid_t inp_1,
-                                   dword_t inp_1_size, lpvoid_t inp_2,
-                                   dword_t inp_2_size, lpvoid_t inp_3,
-                                   dword_t inp_3_size, lpvoid_t out,
-                                   dword_t out_size) {
-  const uint8_t* key = nullptr;
-  if (key_num == 0x19) {
-    key = key19;
-  }
-
-  if (key) {
-    XeCryptHmacSha_entry((void*)key, 0x10, inp_1, inp_1_size, inp_2, inp_2_size,
-                         inp_3, inp_3_size, out, out_size);
-
-    return X_STATUS_SUCCESS;
-  }
-
-  return X_STATUS_UNSUCCESSFUL;
-}
-DECLARE_XBOXKRNL_EXPORT1(XeKeysHmacSha, kNone, kImplemented);
-
-static const uint8_t xe_key_obfuscation_key[16] = {
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-
-dword_result_t XeKeysAesCbcUsingKey_entry(lpvoid_t obscured_key,
-                                          lpvoid_t inp_ptr, dword_t inp_size,
-                                          lpvoid_t out_ptr, lpvoid_t feed_ptr,
-                                          dword_t encrypt) {
-  uint8_t key[16];
-
-  // Deobscure key
-  XECRYPT_AES_STATE aes;
-  XeCryptAesKey_entry(&aes, (uint8_t*)xe_key_obfuscation_key);
-  XeCryptAesEcb_entry(&aes, obscured_key, key, 0);
-
-  // Run CBC using deobscured key
-  XeCryptAesKey_entry(&aes, key);
-  XeCryptAesCbc_entry(&aes, inp_ptr, inp_size, out_ptr, feed_ptr, encrypt);
-
-  return X_STATUS_SUCCESS;
-}
-DECLARE_XBOXKRNL_EXPORT1(XeKeysAesCbcUsingKey, kNone, kImplemented);
-
-dword_result_t XeKeysObscureKey_entry(lpvoid_t input, lpvoid_t output) {
-  // Based on HvxKeysObscureKey
-  // Seems to encrypt input with per-console KEY_OBFUSCATION_KEY (key 0x18)
-
-  XECRYPT_AES_STATE aes;
-  XeCryptAesKey_entry(&aes, (uint8_t*)xe_key_obfuscation_key);
-  XeCryptAesEcb_entry(&aes, input, output, 1);
-
-  return X_STATUS_SUCCESS;
-}
-DECLARE_XBOXKRNL_EXPORT1(XeKeysObscureKey, kNone, kImplemented);
-
-dword_result_t XeKeysHmacShaUsingKey_entry(lpvoid_t obscured_key,
-                                           lpvoid_t inp_1, dword_t inp_1_size,
-                                           lpvoid_t inp_2, dword_t inp_2_size,
-                                           lpvoid_t inp_3, dword_t inp_3_size,
-                                           lpvoid_t out, dword_t out_size) {
-  if (!obscured_key) {
-    return X_STATUS_INVALID_PARAMETER;
-  }
-
-  uint8_t key[16];
-
-  // Deobscure key
-  XECRYPT_AES_STATE aes;
-  XeCryptAesKey_entry(&aes, (uint8_t*)xe_key_obfuscation_key);
-  XeCryptAesEcb_entry(&aes, obscured_key, key, 0);
-
-  XeCryptHmacSha_entry(key, 0x10, inp_1, inp_1_size, inp_2, inp_2_size, inp_3,
-                       inp_3_size, out, out_size);
-  return X_STATUS_SUCCESS;
-}
-DECLARE_XBOXKRNL_EXPORT1(XeKeysHmacShaUsingKey, kNone, kImplemented);
 
 }  // namespace xboxkrnl
 }  // namespace kernel

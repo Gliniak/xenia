@@ -21,6 +21,9 @@ project("xenia-vfs-dump")
   links({
     "fmt",
     "xenia-base",
+    "xenia-core",
+    "xenia-kernel",
+    "xenia-ui",
     "xenia-vfs",
   })
   defines({})

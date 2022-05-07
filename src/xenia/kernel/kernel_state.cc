@@ -30,6 +30,10 @@
 
 namespace xe {
 namespace kernel {
+namespace xboxkrnl {
+// xboxkrnl_xekeys.cc
+bool xeKeysLoadKeyVault();
+}  // namespace xboxkrnl
 
 constexpr uint32_t kDeferredOverlappedDelayMillis = 100;
 
@@ -44,7 +48,9 @@ KernelState::KernelState(Emulator* emulator)
     : emulator_(emulator),
       memory_(emulator->memory()),
       dispatch_thread_running_(false),
-      dpc_list_(emulator->memory()) {
+      dpc_list_(emulator->memory()),
+      title_id_(0),
+      title_spa_data_(nullptr, 0) {
   processor_ = emulator->processor();
   file_system_ = emulator->file_system();
 
@@ -91,17 +97,19 @@ KernelState::~KernelState() {
 
 KernelState* KernelState::shared() { return shared_kernel_state_; }
 
-uint32_t KernelState::title_id() const {
-  assert_not_null(executable_module_);
-
-  xex2_opt_execution_info* exec_info = 0;
-  executable_module_->GetOptHeader(XEX_HEADER_EXECUTION_INFO, &exec_info);
-
-  if (exec_info) {
-    return exec_info->title_id;
+std::string KernelState::title_name() const {
+  if (!title_spa_data_.is_valid()) {
+    return "Unknown title";
   }
 
-  return 0;
+  // TODO(gibbed): get title respective to user locale.
+  auto title_name = title_spa_data_.title(XLanguage::kEnglish);
+  if (title_name.empty()) {
+    // If English title is unavailable, get the title in default locale.
+    title_name = title_spa_data_.title();
+  }
+
+  return title_name;
 }
 
 uint32_t KernelState::process_type() const {
@@ -240,6 +248,8 @@ object_ref<XThread> KernelState::LaunchModule(object_ref<UserModule> module) {
   SetExecutableModule(module);
   XELOGI("KernelState: Launching module...");
 
+  xboxkrnl::xeKeysLoadKeyVault();
+
   // Create a thread to run in.
   // We start suspended so we can run the debugger prep.
   auto thread = object_ref<XThread>(
@@ -280,6 +290,16 @@ void KernelState::SetExecutableModule(object_ref<UserModule> module) {
   executable_module_ = std::move(module);
   if (!executable_module_) {
     return;
+  }
+
+  // Read the title's XDBF/SPA data
+  auto title_id_str = fmt::format("{:08X}", title_id());
+  uint32_t resource_data = 0;
+  uint32_t resource_size = 0;
+  if (XSUCCEEDED(executable_module_->GetSection(
+          title_id_str.c_str(), &resource_data, &resource_size))) {
+    title_spa_data_ = util::XdbfGameData(
+        memory_->TranslateVirtual(resource_data), resource_size);
   }
 
   assert_zero(process_info_block_address_);

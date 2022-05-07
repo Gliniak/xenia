@@ -64,13 +64,12 @@ void AddODDContentTest(object_ref<XStaticEnumerator<XCONTENT_AGGREGATE_DATA>> e,
 
         auto item = e->AppendItem();
         assert_not_null(item);
-        if (item) {
-          item->device_id = static_cast<uint32_t>(DummyDeviceId::ODD);
-          item->content_type = content_type;
-          item->set_display_name(to_utf16(content_entry->name()));
-          item->set_file_name(content_entry->name());
-          item->title_id = title_id;
-        }
+        item = {0};
+        item->device_id = static_cast<uint32_t>(DummyDeviceId::ODD);
+        item->content_type = content_type;
+        item->set_display_name(to_utf16(content_entry->name()));
+        item->set_file_name(content_entry->name());
+        item->title_id = title_id;
       }
     }
   }
@@ -115,20 +114,18 @@ dword_result_t XamContentAggregateCreateEnumerator_entry(qword_t xuid,
     for (auto& title_id : title_ids) {
       // Get all content data.
       auto content_datas = kernel_state()->content_manager()->ListContent(
-          static_cast<uint32_t>(DummyDeviceId::HDD), content_type_enum,
-          title_id);
+          static_cast<uint32_t>(DummyDeviceId::HDD),
+          XContentType(uint32_t(content_type)), title_id);
       for (const auto& content_data : content_datas) {
-        auto item = e->AppendItem();
+        auto item = reinterpret_cast<XCONTENT_AGGREGATE_DATA*>(e->AppendItem());
         assert_not_null(item);
-        if (item) {
-          *item = content_data;
-        }
+        *item = content_data;
       }
     }
   }
 
   if (!device_info || device_info->device_type == DeviceType::ODD) {
-    AddODDContentTest(e, content_type_enum);
+    AddODDContentTest(e, XContentType(uint32_t(content_type)));
   }
 
   XELOGD("XamContentAggregateCreateEnumerator: added {} items to enumerator",

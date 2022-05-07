@@ -33,13 +33,15 @@ class StfsContainerDevice : public Device {
   const static uint32_t kBlockSize = 0x1000;
 
   StfsContainerDevice(const std::string_view mount_path,
-                      const std::filesystem::path& host_path);
+                      const std::filesystem::path& host_path,
+                      bool read_only = false, bool create = false);
   ~StfsContainerDevice() override;
 
   bool Initialize() override;
 
   bool is_read_only() const override {
-    return header_.metadata.volume_type != XContentVolumeType::kStfs ||
+    return !allow_writing_ ||
+           header_.metadata.volume_type != XContentVolumeType::kStfs ||
            header_.metadata.volume_descriptor.stfs.flags.bits.read_only_format;
   }
 
@@ -81,11 +83,53 @@ class StfsContainerDevice : public Device {
     return files_total_size_ - sizeof(StfsHeader);
   }
 
+  static uint32_t bytes_to_stfs_blocks(size_t num_bytes) {
+    // xe::round_up doesn't handle 0 how we need it to, so:
+    return uint32_t((num_bytes + kBlockSize - 1) / kBlockSize);
+  }
+
+  uint32_t STFSMaxHashLevel() const {
+    if (header_.metadata.volume_descriptor.stfs.total_block_count <=
+        kBlocksPerHashLevel[0]) {
+      return 0;
+    }
+    if (header_.metadata.volume_descriptor.stfs.total_block_count <=
+        kBlocksPerHashLevel[1]) {
+      return 1;
+    }
+    return 2;
+  }
+
+  StfsHeader& header() { return header_; }
+
+  // Writes updated headers & hash-tables to the file
+  bool STFSFlush();
+
+ protected:
+  friend class StfsContainerEntry;
+  void STFSBlockMarkDirty(uint32_t block_num);
+  bool STFSBlockIsMarkedDirty(uint32_t block_num) const;
+
+  uint32_t STFSBlockAllocate();
+  void STFSBlockFree(uint32_t block_num);
+
+  // Resets hash tables to an empty state
+  bool STFSReset();
+
+  std::vector<uint32_t> STFSGetDataBlockChain(uint32_t block_num,
+                                              uint32_t max_count = 0xFFFFFF);
+  void STFSSetDataBlockChain(const std::vector<uint32_t>& chain);
+
+  std::vector<uint32_t> STFSResizeDataBlockChain(uint32_t start_block,
+                                                 uint32_t num_blocks);
+
  private:
   const uint32_t kBlocksPerHashLevel[3] = {170, 28900, 4913000};
   const uint32_t kEndOfChain = 0xFFFFFF;
   const uint32_t kEntriesPerDirectoryBlock =
       kBlockSize / sizeof(StfsDirectoryEntry);
+
+  FILE* main_file() { return files_.at(0); }
 
   enum class Error {
     kSuccess = 0,
@@ -116,30 +160,51 @@ class StfsContainerDevice : public Device {
                       StfsContainerEntry* parent);
   void BlockToOffsetSVOD(size_t sector, size_t* address, size_t* file_index);
 
-  Error ReadSTFS();
-  size_t BlockToOffsetSTFS(uint64_t block_index) const;
-  uint32_t BlockToHashBlockNumberSTFS(uint32_t block_index,
-                                      uint32_t hash_level) const;
-  size_t BlockToHashBlockOffsetSTFS(uint32_t block_index,
-                                    uint32_t hash_level) const;
+  bool STFSDirectoryRead();
+  void STFSDirectoryWrite();
 
-  const StfsHashEntry* GetBlockHash(uint32_t block_index);
+  uint64_t STFSDataBlockToOffset(uint32_t block_num) const;
+  uint32_t STFSDataBlockToHashBlockNum(uint32_t block_num,
+                                       uint32_t hash_level) const;
+  uint64_t STFSDataBlockToHashBlockOffset(uint32_t block_num,
+                                          uint32_t hash_level) const;
+
+  StfsHashTable& STFSGetHashTable(uint32_t block_num, uint32_t hash_level,
+                                  bool use_secondary_block = false,
+                                  uint8_t* hash_in_out = nullptr,
+                                  bool* is_table_invalid = nullptr);
+
+  StfsHashEntry& STFSGetHashEntry(uint32_t block_num, uint32_t hash_level,
+                                  bool use_secondary_block = false,
+                                  uint8_t* hash_in_out = nullptr);
+
+  // DataHash functions handle secondary block & hash checking for us
+  StfsHashTable& STFSGetDataHashTable(uint32_t block_num,
+                                      bool* is_table_invalid);
+  StfsHashEntry STFSGetDataHashEntry(uint32_t block_num);
+  void STFSSetDataHashEntry(uint32_t block_num,
+                            const StfsHashEntry& hash_entry);
 
   std::string name_;
   std::filesystem::path host_path_;
+  bool allow_writing_ = false;
+  bool allow_creating_ = false;
 
   std::map<size_t, FILE*> files_;
   size_t files_total_size_;
+  std::unique_ptr<Entry> root_entry_;
 
   size_t svod_base_offset_;
-
-  std::unique_ptr<Entry> root_entry_;
-  StfsHeader header_;
   SvodLayoutType svod_layout_;
-  uint32_t blocks_per_hash_table_;
-  uint32_t block_step[2];
 
-  std::unordered_map<size_t, StfsHashTable> cached_hash_tables_;
+  StfsHeader header_;
+
+  std::unordered_map<uint64_t, StfsHashTable> hash_tables_;
+  std::vector<uint32_t> dirty_blocks_;
+  std::vector<uint64_t> invalid_tables_;
+
+  uint32_t blocks_per_hash_table_;
+  uint32_t block_step_[2];
 };
 
 }  // namespace vfs

@@ -246,4 +246,6 @@ void LoadGameConfig(const std::string_view title_id) {
   }
 }
 
+std::filesystem::path GetConfigFolder() { return config_folder; }
+
 }  // namespace config

@@ -97,6 +97,7 @@ class UserModule : public XModule {
 
  private:
   X_STATUS LoadXexContinue();
+  bool TryMountUpdatePackage(const std::string& module_path);
 
   std::string name_;
   std::string path_;
