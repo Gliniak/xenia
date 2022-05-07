@@ -50,18 +50,18 @@ KernelState::KernelState(Emulator* emulator)
       dispatch_thread_running_(false),
       dpc_list_(emulator->memory()),
       title_id_(0),
-      title_spa_data_(nullptr, 0) {
+      title_spa_data_() {
   processor_ = emulator->processor();
   file_system_ = emulator->file_system();
 
   app_manager_ = std::make_unique<xam::AppManager>();
-  user_profile_ = std::make_unique<xam::UserProfile>();
 
   auto content_root = emulator_->content_root();
   if (!content_root.empty()) {
     content_root = std::filesystem::absolute(content_root);
   }
   content_manager_ = std::make_unique<xam::ContentManager>(this, content_root);
+  user_profile_ = std::make_unique<xam::UserProfile>(emulator_->profile_root());
 
   assert_null(shared_kernel_state_);
   shared_kernel_state_ = this;
@@ -98,18 +98,7 @@ KernelState::~KernelState() {
 KernelState* KernelState::shared() { return shared_kernel_state_; }
 
 std::string KernelState::title_name() const {
-  if (!title_spa_data_.is_valid()) {
-    return "Unknown title";
-  }
-
-  // TODO(gibbed): get title respective to user locale.
-  auto title_name = title_spa_data_.title(XLanguage::kEnglish);
-  if (title_name.empty()) {
-    // If English title is unavailable, get the title in default locale.
-    title_name = title_spa_data_.title();
-  }
-
-  return title_name;
+  return title_spa_data_.GetTitleName();
 }
 
 uint32_t KernelState::process_type() const {
@@ -298,8 +287,11 @@ void KernelState::SetExecutableModule(object_ref<UserModule> module) {
   uint32_t resource_size = 0;
   if (XSUCCEEDED(executable_module_->GetSection(
           title_id_str.c_str(), &resource_data, &resource_size))) {
-    title_spa_data_ = util::XdbfGameData(
-        memory_->TranslateVirtual(resource_data), resource_size);
+    // Set title SPA and get title name/icon
+    title_spa_data_ = xam::xdbf::SpaFile();
+    title_spa_data_.Read(memory_->TranslateVirtual(resource_data),
+                         resource_size);
+    user_profile()->SetTitleSpaData(title_spa_data_);
   }
 
   assert_zero(process_info_block_address_);

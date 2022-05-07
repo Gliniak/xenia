@@ -35,7 +35,7 @@
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/gameinfo_utils.h"
-#include "xenia/kernel/util/xdbf_utils.h"
+#include "xenia/kernel/xam/xdbf/xdbf.h"
 #include "xenia/kernel/xam/xam_module.h"
 #include "xenia/kernel/xbdm/xbdm_module.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
@@ -83,6 +83,7 @@ Emulator::Emulator(const std::filesystem::path& command_line,
       command_line_(command_line),
       storage_root_(storage_root),
       content_root_(content_root),
+      profile_root_(content_root / "profile"),
       cache_root_(cache_root),
       title_name_(),
       title_version_(),
@@ -794,7 +795,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     title_name_ = kernel_state()->title_name();
     auto icon_block = kernel_state()->title_icon();
     if (icon_block) {
-      display_window_->SetIcon(icon_block.buffer, icon_block.size);
+      display_window_->SetIcon(icon_block->data.data(), icon_block->info.size);
     }
   }
 

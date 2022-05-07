@@ -100,6 +100,9 @@ class Emulator {
   // Folder guest content is stored in.
   const std::filesystem::path& content_root() const { return content_root_; }
 
+  // Folder guest profile content is stored in.
+  const std::filesystem::path& profile_root() const { return profile_root_; }
+
   // Folder files safe to remove without significant side effects are stored in.
   const std::filesystem::path& cache_root() const { return cache_root_; }
 
@@ -220,6 +223,7 @@ class Emulator {
   std::filesystem::path command_line_;
   std::filesystem::path storage_root_;
   std::filesystem::path content_root_;
+  std::filesystem::path profile_root_;
   std::filesystem::path cache_root_;
 
   std::string title_name_;

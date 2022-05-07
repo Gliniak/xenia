@@ -23,7 +23,7 @@
 #include "xenia/cpu/export_resolver.h"
 #include "xenia/kernel/util/native_list.h"
 #include "xenia/kernel/util/object_table.h"
-#include "xenia/kernel/util/xdbf_utils.h"
+#include "xenia/kernel/xam/xdbf/xdbf.h"
 #include "xenia/kernel/xam/app_manager.h"
 #include "xenia/kernel/xam/content_manager.h"
 #include "xenia/kernel/xam/user_profile.h"
@@ -104,11 +104,10 @@ class KernelState {
 
   std::string title_name() const;
   XLanguage title_language() const {
-    return title_spa_data_.is_valid() ? title_spa_data_.default_language()
-                                      : XLanguage::kEnglish;
+    return title_spa_data_.GetDefaultLocale();
   }
 
-  util::XdbfBlock title_icon() const { return title_spa_data_.icon(); }
+  xam::xdbf::Entry* title_icon() const { return title_spa_data_.GetIcon(); }
 
   xam::AppManager* app_manager() const { return app_manager_.get(); }
   xam::ContentManager* content_manager() const {
@@ -233,7 +232,7 @@ class KernelState {
   std::vector<TerminateNotification> terminate_notifications_;
 
   uint32_t title_id_;
-  util::XdbfGameData title_spa_data_;
+  xam::xdbf::SpaFile title_spa_data_;
 
   uint32_t process_info_block_address_ = 0;
 

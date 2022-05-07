@@ -720,22 +720,22 @@ bool StfsContainerDevice::STFSFlush() {
   }
 
   // Copy in title thumbnail
-  auto& title_icon = kernel::kernel_state()->title_icon();
-  if (title_icon.buffer && title_icon.size) {
+  auto title_icon = kernel::kernel_state()->title_icon();
+  if (title_icon->info.size && !title_icon->data.empty()) {
     // Only copy in if it's 0x3D00 or less
     // (we could use std::min here, but there's no use in only copying part of
     // the icon)
-    if (title_icon.size <= XContentMetadata::kThumbLengthV2) {
-      std::copy_n(title_icon.buffer, title_icon.size,
+    if (title_icon->info.size <= XContentMetadata::kThumbLengthV2) {
+      std::copy_n(title_icon->data.data(), title_icon->info.size,
                   header_.metadata.title_thumbnail);
       header_.metadata.title_thumbnail_size =
-          static_cast<uint32_t>(title_icon.size);
+          static_cast<uint32_t>(title_icon->info.size);
 
       // TODO(Gliniak): Certain games doesn't write thumbnail icon, but console
       // probably duplicates it
-      std::copy_n(title_icon.buffer, title_icon.size,
+      std::copy_n(title_icon->data.data(), title_icon->info.size,
                   header_.metadata.thumbnail);
-      header_.metadata.thumbnail_size = static_cast<uint32_t>(title_icon.size);
+      header_.metadata.thumbnail_size = static_cast<uint32_t>(title_icon->info.size);
     }
   }
 

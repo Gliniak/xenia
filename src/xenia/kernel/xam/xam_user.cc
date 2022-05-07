@@ -24,6 +24,85 @@ namespace xe {
 namespace kernel {
 namespace xam {
 
+struct X_PROFILEENUMRESULT {
+  xe::be<uint64_t> xuid_offline;  // E0.....
+  X_XAMACCOUNTINFO account;
+  xe::be<uint32_t> device_id;
+};
+static_assert_size(X_PROFILEENUMRESULT, 0x188);
+
+dword_result_t XamProfileCreateEnumerator_entry(dword_t device_id,
+                                          lpdword_t handle_out) {
+  assert_not_null(handle_out);
+
+  auto e = new XStaticUntypedEnumerator(
+      kernel_state(), 1, sizeof(X_PROFILEENUMRESULT));
+
+  e->Initialize(0, 0, 0, 0, 0);
+
+  const auto& user_profile = kernel_state()->user_profile();
+
+  X_PROFILEENUMRESULT* profile = (X_PROFILEENUMRESULT*)e->AppendItem();
+  memset(profile, 0, sizeof(X_PROFILEENUMRESULT));
+  profile->xuid_offline = user_profile->xuid();
+  profile->device_id = 0x00000001;
+
+  auto tag = xe::to_utf16(user_profile->name());
+  xe::copy_and_swap<char16_t>(profile->account.gamertag, tag.c_str(),
+                             tag.length());
+  profile->account.xuid_online = user_profile->xuid();
+
+  *handle_out = e->handle();
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamProfileCreateEnumerator, kUserProfiles, kImplemented);
+
+dword_result_t XamProfileEnumerate_entry(dword_t handle, dword_t flags,
+                                         lpvoid_t buffer,
+                                         pointer_t<XAM_OVERLAPPED> overlapped) {
+  assert_true(flags == 0);
+
+  
+  auto e = kernel_state()->object_table()->LookupObject<XEnumerator>(handle);
+  if (!e) {
+    if (overlapped) {
+      kernel_state()->CompleteOverlappedImmediateEx(
+          overlapped, X_ERROR_INVALID_HANDLE, X_ERROR_INVALID_HANDLE, 0);
+      return X_ERROR_IO_PENDING;
+    } else {
+      return X_ERROR_INVALID_HANDLE;
+    }
+  }
+
+  buffer.Zero(sizeof(X_PROFILEENUMRESULT));
+
+  X_RESULT result = X_ERROR_SUCCESS;
+
+  /* if (e->current_item() >= e->item_count()) {
+    result = X_ERROR_NO_MORE_FILES;
+  } else {
+    auto item_buffer = buffer.as<uint8_t*>();
+    if (!e->WriteItems(item_buffer)) {
+      result = X_ERROR_NO_MORE_FILES;
+    } else {
+      result = X_ERROR_SUCCESS;
+    }
+  }
+  */
+
+  // Return X_ERROR_NO_MORE_FILES in HRESULT form.
+  X_HRESULT extended_result = result != 0 ? X_HRESULT_FROM_WIN32(result) : 0;
+  if (overlapped) {
+    kernel_state()->CompleteOverlappedImmediateEx(
+        overlapped, result, extended_result, result == X_ERROR_SUCCESS ? 1 : 0);
+    return X_ERROR_IO_PENDING;
+  } else {
+    assert_always();
+    return X_ERROR_INVALID_PARAMETER;
+  }
+}
+DECLARE_XAM_EXPORT1(XamProfileEnumerate, kUserProfiles, kImplemented);
+
 X_HRESULT_result_t XamUserGetXUID_entry(dword_t user_index, dword_t type_mask,
                                         lpqword_t xuid_ptr) {
   assert_true(type_mask == 1 || type_mask == 2 || type_mask == 3 ||
@@ -540,12 +619,12 @@ struct X_ACHIEVEMENT_DETAILS {
   xe::be<uint32_t> unachieved_ptr;
   xe::be<uint32_t> image_id;
   xe::be<uint32_t> gamerscore;
-  X_ACHIEVEMENT_UNLOCK_TIME unlock_time;
+  xe::be<uint64_t> unlock_time;
   xe::be<uint32_t> flags;
 
   static const size_t kStringBufferSize = 464;
 };
-static_assert_size(X_ACHIEVEMENT_DETAILS, 36);
+static_assert_size(X_ACHIEVEMENT_DETAILS, 40);
 
 class XStaticAchievementEnumerator : public XEnumerator {
  public:
@@ -556,10 +635,7 @@ class XStaticAchievementEnumerator : public XEnumerator {
     std::u16string unachieved;
     uint32_t image_id;
     uint32_t gamerscore;
-    struct {
-      uint32_t unk_0;
-      uint32_t unk_4;
-    } unlock_time;
+    uint64_t unlock_time;
     uint32_t flags;
   };
 
@@ -603,8 +679,7 @@ class XStaticAchievementEnumerator : public XEnumerator {
           !!(flags_ & 4) ? AppendString(string_buffer, item.unachieved) : 0;
       details[i].image_id = item.image_id;
       details[i].gamerscore = item.gamerscore;
-      details[i].unlock_time.unk_0 = item.unlock_time.unk_0;
-      details[i].unlock_time.unk_4 = item.unlock_time.unk_4;
+      details[i].unlock_time = item.unlock_time;
       details[i].flags = item.flags;
     }
 
@@ -672,20 +747,24 @@ dword_result_t XamUserCreateAchievementEnumerator_entry(
     return result;
   }
 
-  uint32_t dummy_count = std::min(100u, uint32_t(count));
-  for (uint32_t i = 1; i <= dummy_count; ++i) {
-    auto item = XStaticAchievementEnumerator::AchievementDetails{
-        i,  // dummy achievement id
-        fmt::format(u"Dummy {}", i),
-        u"Dummy description",
-        u"Dummy unachieved",
-        i,  // dummy image id
-        0,
-        {0, 0},
-        8};  // flags=8 makes dummy achievements show up in 4D5307DC
-             // achievements list.
+  auto* game_gpd = kernel_state()->user_profile()->GetTitleGpd(title_id);
+  if (!game_gpd) {
+    XELOGE(
+        "XamUserCreateAchievementEnumerator called without GPD being loaded!");
+    return X_ERROR_SUCCESS;
+  }
+
+  std::vector<xam::xdbf::Achievement> achievements;
+  game_gpd->GetAchievements(&achievements);
+
+  for (auto ach : achievements) {
+    auto item = XStaticAchievementEnumerator::AchievementDetails {
+        ach.id,       ach.label,      ach.description, ach.unachieved_desc,
+        ach.image_id, ach.gamerscore, ach.unlock_time, ach.flags};
     e->AppendItem(item);
   }
+  XELOGD("XamUserCreateAchievementEnumerator: added {} items to enumerator",
+         e->items_per_enumerate());
 
   *handle_ptr = e->handle();
   return X_ERROR_SUCCESS;
