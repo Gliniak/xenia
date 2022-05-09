@@ -203,29 +203,30 @@ dword_result_t xeXamContentCreate(dword_t user_index, lpstring_t root_name,
       *disposition_ptr = disposition;
     }
 
-  if (create) {
-    result =
-        content_manager->CreateContent(root_name, content_data, flags);
-  } else if (open) {
-    result = content_manager->OpenContent(root_name, content_data);
-  }
+    if (create) {
+      result = content_manager->CreateContent(root_name, content_data, flags);
+    } else if (open) {
+      result = content_manager->OpenContent(root_name, content_data);
+    }
 
-  if (license_mask_ptr && XSUCCEEDED(result)) {
-    *license_mask_ptr = static_cast<uint32_t>(cvars::license_mask);
-  }
+    if (license_mask_ptr && XSUCCEEDED(result)) {
+      *license_mask_ptr = static_cast<uint32_t>(cvars::license_mask);
+    }
 
     extended_error = X_HRESULT_FROM_WIN32(result);
     length = disposition;
+    if (int32_t(extended_error) < 0) {
+      result = X_ERROR_FUNCTION_FAILED;
+    }
     return result;
   };
 
-  if (!overlapped_ptr) {
-    uint32_t extended_error, length;
-    return run(extended_error, length);
-  } else {
+  if (overlapped_ptr) {
     kernel_state()->CompleteOverlappedDeferredEx(run, overlapped_ptr);
     return X_ERROR_IO_PENDING;
   }
+  uint32_t extended_error, length;
+  return run(extended_error, length);
 }
 
 dword_result_t XamContentCreateEx_entry(
@@ -278,24 +279,33 @@ dword_result_t XamContentFlush_entry(lpstring_t root_name,
   if (overlapped_ptr) {
     kernel_state()->CompleteOverlappedImmediate(overlapped_ptr, result);
     return X_ERROR_IO_PENDING;
-  } else {
-    return result;
   }
+  return result;
 }
 DECLARE_XAM_EXPORT1(XamContentFlush, kContent, kStub);
 
 dword_result_t XamContentClose_entry(lpstring_t root_name,
                                      lpunknown_t overlapped_ptr) {
-  // Closes a previously opened root from XamContentCreate*.
-  auto result =
-      kernel_state()->content_manager()->CloseContent(root_name.value());
+  auto content_manager = kernel_state()->content_manager();
+  auto run = [content_manager, root_name = root_name.value()](
+                 uint32_t& extended_error, uint32_t& length) -> X_RESULT {
+    // Closes a previously opened root from XamContentCreate*.
+    X_RESULT result = X_ERROR_INVALID_PARAMETER;
+    result = content_manager->CloseContent(root_name);
+    extended_error = X_HRESULT_FROM_WIN32(result);
+    length = 0;
+    return result;
+  };
 
   if (overlapped_ptr) {
-    kernel_state()->CompleteOverlappedImmediate(overlapped_ptr, result);
+    uint32_t extended_error, length;
+    auto result = run(extended_error, length);
+    kernel_state()->CompleteOverlappedImmediateEx(overlapped_ptr, result,
+                                                  extended_error, length);
     return X_ERROR_IO_PENDING;
-  } else {
-    return result;
   }
+  uint32_t extended_error, length;
+  return run(extended_error, length);
 }
 DECLARE_XAM_EXPORT1(XamContentClose, kContent, kImplemented);
 
@@ -304,29 +314,37 @@ dword_result_t XamContentGetCreator_entry(dword_t user_index,
                                           lpdword_t is_creator_ptr,
                                           lpqword_t creator_xuid_ptr,
                                           lpunknown_t overlapped_ptr) {
-  auto result = X_ERROR_SUCCESS;
+  X_RESULT result = X_ERROR_SUCCESS;
+  XCONTENT_AGGREGATE_DATA content_data = {
+      *content_data_ptr.as<XCONTENT_DATA*>()};
 
-  auto& content_data = *content_data_ptr.as<XCONTENT_DATA*>();
+  auto run = [content_data, is_creator_ptr, creator_xuid_ptr, overlapped_ptr](
+                 uint32_t& extended_error, uint32_t& length) -> X_RESULT {
+    X_RESULT result = X_ERROR_SUCCESS;
 
-  if (content_data.content_type == XContentType::kSavedGame) {
-    // User always creates saves.
-    *is_creator_ptr = 1;
-    if (creator_xuid_ptr) {
-      *creator_xuid_ptr = kernel_state()->user_profile()->xuid();
+    if (content_data.content_type == XContentType::kSavedGame) {
+      // User always creates saves.
+      *is_creator_ptr = 1;
+      if (creator_xuid_ptr) {
+        *creator_xuid_ptr = kernel_state()->user_profile()->xuid();
+      }
+    } else {
+      *is_creator_ptr = 0;
+      if (creator_xuid_ptr) {
+        *creator_xuid_ptr = 0;
+      }
     }
-  } else {
-    *is_creator_ptr = 0;
-    if (creator_xuid_ptr) {
-      *creator_xuid_ptr = 0;
-    }
-  }
+    extended_error = X_HRESULT_FROM_WIN32(result);
+    length = 0;
+    return result;
+  };
 
   if (overlapped_ptr) {
-    kernel_state()->CompleteOverlappedImmediate(overlapped_ptr, result);
+    kernel_state()->CompleteOverlappedDeferredEx(run, overlapped_ptr);
     return X_ERROR_IO_PENDING;
-  } else {
-    return result;
   }
+  uint32_t extended_error, length;
+  return run(extended_error, length);
 }
 DECLARE_XAM_EXPORT1(XamContentGetCreator, kContent, kImplemented);
 
@@ -364,9 +382,8 @@ dword_result_t XamContentGetThumbnail_entry(dword_t user_index,
   if (overlapped_ptr) {
     kernel_state()->CompleteOverlappedImmediate(overlapped_ptr, result);
     return X_ERROR_IO_PENDING;
-  } else {
-    return result;
   }
+  return result;
 }
 DECLARE_XAM_EXPORT1(XamContentGetThumbnail, kContent, kImplemented);
 
@@ -375,38 +392,60 @@ dword_result_t XamContentSetThumbnail_entry(dword_t user_index,
                                             lpvoid_t buffer_ptr,
                                             dword_t buffer_size,
                                             lpunknown_t overlapped_ptr) {
+  X_RESULT result = X_ERROR_INVALID_PARAMETER;
+
+  auto content_manager = kernel_state()->content_manager();
+
   XCONTENT_AGGREGATE_DATA content_data = {
       *content_data_ptr.as<XCONTENT_DATA*>()};
-
-  // Buffer is PNG data.
   auto buffer = std::vector<uint8_t>((uint8_t*)buffer_ptr,
                                      (uint8_t*)buffer_ptr + buffer_size);
-  auto result = kernel_state()->content_manager()->SetContentThumbnail(
-      content_data, std::move(buffer));
+
+  auto run = [content_manager, content_data, buffer](
+                 uint32_t& extended_error, uint32_t& length) -> X_RESULT {
+    X_RESULT result = X_ERROR_INVALID_PARAMETER;
+    result = content_manager->SetContentThumbnail(content_data, buffer);
+    extended_error = X_HRESULT_FROM_WIN32(result);
+    length = 0;
+    return result;
+  };
 
   if (overlapped_ptr) {
-    kernel_state()->CompleteOverlappedImmediate(overlapped_ptr, result);
+    kernel_state()->CompleteOverlappedDeferredEx(run, overlapped_ptr);
     return X_ERROR_IO_PENDING;
-  } else {
-    return result;
   }
+  uint32_t extended_error, length;
+  return run(extended_error, length);
 }
 DECLARE_XAM_EXPORT1(XamContentSetThumbnail, kContent, kImplemented);
 
 dword_result_t XamContentDelete_entry(dword_t user_index,
                                       lpvoid_t content_data_ptr,
                                       lpunknown_t overlapped_ptr) {
+  X_RESULT result = X_ERROR_INVALID_PARAMETER;
+
   XCONTENT_AGGREGATE_DATA content_data = {
       *content_data_ptr.as<XCONTENT_DATA*>()};
 
-  auto result = kernel_state()->content_manager()->DeleteContent(content_data);
+  auto content_manager = kernel_state()->content_manager();
+  auto run = [content_manager, content_data](uint32_t& extended_error,
+                                             uint32_t& length) -> X_RESULT {
+    X_RESULT result = X_ERROR_INVALID_PARAMETER;
+    result = content_manager->DeleteContent(content_data);
+    extended_error = X_HRESULT_FROM_WIN32(result);
+    length = 0;
+    if (int32_t(extended_error) < 0) {
+      result = X_ERROR_FUNCTION_FAILED;
+    }
+    return result;
+  };
 
   if (overlapped_ptr) {
-    kernel_state()->CompleteOverlappedImmediate(overlapped_ptr, result);
+    kernel_state()->CompleteOverlappedDeferredEx(run, overlapped_ptr);
     return X_ERROR_IO_PENDING;
-  } else {
-    return result;
   }
+  uint32_t extended_error, length;
+  return run(extended_error, length);
 }
 DECLARE_XAM_EXPORT1(XamContentDelete, kContent, kImplemented);
 
