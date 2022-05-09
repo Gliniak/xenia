@@ -730,6 +730,12 @@ bool StfsContainerDevice::STFSFlush() {
                   header_.metadata.title_thumbnail);
       header_.metadata.title_thumbnail_size =
           static_cast<uint32_t>(title_icon.size);
+
+      // TODO(Gliniak): Certain games doesn't write thumbnail icon, but console
+      // probably duplicates it
+      std::copy_n(title_icon.buffer, title_icon.size,
+                  header_.metadata.thumbnail);
+      header_.metadata.thumbnail_size = static_cast<uint32_t>(title_icon.size);
     }
   }
 
@@ -896,7 +902,7 @@ bool StfsContainerDevice::STFSFlush() {
       header_hash, &header_.header.signature.console);
 
   xe::filesystem::Seek(package_file, 0, SEEK_SET);
-  fwrite(&header_.header, sizeof(header_.header), 1, package_file);
+  fwrite(&header_, header_.header.header_size, 1, package_file);
 
   // Finish with a fflush
   fflush(package_file);
@@ -1446,7 +1452,7 @@ StfsHashTable& StfsContainerDevice::STFSGetHashTable(uint32_t block_num,
       sha.finalize(digest);
       if (memcmp(digest, hash_in_out, 0x14)) {
         XELOGW(
-            "STFSGetHashEntry: level %d hash table at 0x%llX "
+            "STFSGetHashEntry: level {} hash table at {:16X} "
             "is corrupt (hash mismatch)!",
             hash_level, table_offset);
         invalid_table = true;

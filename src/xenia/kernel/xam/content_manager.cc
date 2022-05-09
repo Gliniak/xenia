@@ -71,7 +71,7 @@ ContentManager::~ContentManager() = default;
 
 std::filesystem::path ContentManager::ResolvePackageRoot(
     XContentType content_type, uint32_t title_id) {
-  if (title_id == -1) {
+  if (title_id == kCurrentlyRunningTitleId || !title_id) {
     title_id = kernel_state_->title_id();
   }
   auto title_id_str = fmt::format("{:08X}", title_id);
@@ -92,15 +92,11 @@ std::filesystem::path ContentManager::ResolvePackagePath(
 
 std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
     uint32_t device_id, XContentType content_type, uint32_t title_id) {
-  if (title_id == -1) {
+  if (title_id == kCurrentlyRunningTitleId) {
     title_id = kernel_state_->title_id();
   }
 
   std::vector<XCONTENT_AGGREGATE_DATA> result;
-
-  if (title_id == kCurrentlyRunningTitleId) {
-    title_id = kernel_state_->title_id();
-  }
 
   // Search path:
   // content_root/title_id/content_type/*
@@ -134,6 +130,7 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
         fmt::format("\\Device\\Content\\{0}\\", ++content_device_id_),
         file_path, true);
     if (!device->Initialize()) {
+      --content_device_id_;
       // Error reading as STFS package
       continue;
     }
@@ -151,6 +148,7 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
     content_data.title_id = title_id;
 
     result.emplace_back(std::move(content_data));
+    --content_device_id_;
   }
 
   return result;
@@ -372,7 +370,7 @@ X_RESULT ContentManager::SetContentThumbnail(
   header->metadata.thumbnail_size = thumb_size;
   memcpy(header->metadata.thumbnail, buffer.data(), thumb_size);
   fseek(file, 0, SEEK_SET);
-  fwrite(&header, sizeof(header), 1, file);
+  fwrite(header.get(), sizeof(*header), 1, file);
   fclose(file);
   return X_ERROR_SUCCESS;
 }
@@ -386,7 +384,7 @@ X_RESULT ContentManager::DeleteContent(const XCONTENT_AGGREGATE_DATA& data) {
   }
 
   auto package_path = ResolvePackagePath(data);
-  if (std::filesystem::remove_all(package_path) > 0) {
+  if (std::filesystem::remove(package_path)) {
     return X_ERROR_SUCCESS;
   } else {
     return X_ERROR_FILE_NOT_FOUND;

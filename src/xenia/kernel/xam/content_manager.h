@@ -46,12 +46,6 @@ constexpr uint32_t kCurrentlyRunningTitleId = 0xFFFFFFFF;
 namespace xe {
 namespace kernel {
 namespace xam {
-
-// If set in XCONTENT_AGGREGATE_DATA, will be substituted with the running
-// titles ID
-// TODO: check if actual x360 kernel/xam has a value similar to this
-constexpr uint32_t kCurrentlyRunningTitleId = 0xFFFFFFFF;
-
 struct XCONTENT_DATA {
   be<uint32_t> device_id;
   be<XContentType> content_type;
@@ -109,7 +103,7 @@ struct XCONTENT_DATA {
 static_assert_size(XCONTENT_DATA, 308);
 
 struct XCONTENT_AGGREGATE_DATA : XCONTENT_DATA {
-  be<uint64_t> unk134;  // XUID?
+  be<uint64_t> content_owner_xuid;
   be<uint32_t> title_id;
 
   bool operator==(const XCONTENT_AGGREGATE_DATA& other) const {
