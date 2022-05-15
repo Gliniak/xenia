@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <iterator>
 #include <memory>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -121,6 +122,9 @@ struct FileInfo {
 };
 bool GetInfo(const std::filesystem::path& path, FileInfo* out_info);
 std::vector<FileInfo> ListFiles(const std::filesystem::path& path);
+std::vector<FileInfo> ListFilesWithPattern(const std::filesystem::path& path,
+                                           const std::regex pattern,
+                                           bool recursive = false);
 
 }  // namespace filesystem
 }  // namespace xe

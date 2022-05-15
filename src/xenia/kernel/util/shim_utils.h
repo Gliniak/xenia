@@ -360,6 +360,7 @@ using lpfloat_t = const shim::PrimitivePointerParam<float>&;
 using lpdouble_t = const shim::PrimitivePointerParam<double>&;
 using lpstring_t = const shim::StringPointerParam<char, std::string>&;
 using lpu16string_t = const shim::StringPointerParam<char16_t, std::u16string>&;
+using lpu16string_out_t = const shim::StringPointerParam<char16_t, uint32_t>&;
 using function_t = const shim::ParamBase<uint32_t>&;
 using unknown_t = const shim::ParamBase<uint32_t>&;
 using lpunknown_t = const shim::PointerParam&;

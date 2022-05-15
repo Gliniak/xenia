@@ -342,6 +342,29 @@ dword_result_t XamQueryLiveHiveW_entry(lpu16string_t name, lpvoid_t out_buf,
 }
 DECLARE_XAM_EXPORT1(XamQueryLiveHiveW, kNone, kStub);
 
+static uint32_t dash_context_ = 0;  // don't know what this does right now
+
+void XamSetDashContext_entry(dword_t context) {
+  dash_context_ = context.value();
+}
+DECLARE_XAM_EXPORT1(XamSetDashContext, kNone, kStub);
+
+dword_result_t XamGetDashContext_entry() { return dash_context_; }
+DECLARE_XAM_EXPORT1(XamGetDashContext, kNone, kStub);
+
+dword_result_t XamDoesOmniNeedConfiguration_entry() { return 0; }
+DECLARE_XAM_EXPORT1(XamDoesOmniNeedConfiguration, kMisc, kStub);
+
+dword_result_t XamFirstRunExperienceShouldRun_entry() { return 0; }
+DECLARE_XAM_EXPORT1(XamFirstRunExperienceShouldRun, kMisc, kStub);
+
+dword_result_t XamIsXbox1TitleId_entry(dword_t title_id) { return 0; }
+DECLARE_XAM_EXPORT1(XamIsXbox1TitleId, kMisc, kStub);
+
+dword_result_t XamIsChildAccountSignedIn_entry() { return 0; }
+DECLARE_XAM_EXPORT1(XamIsChildAccountSignedIn, kMisc, kStub);
+
+
 }  // namespace xam
 }  // namespace kernel
 }  // namespace xe

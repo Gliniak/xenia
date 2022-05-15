@@ -109,7 +109,7 @@ struct XCONTENT_DATA {
 static_assert_size(XCONTENT_DATA, 308);
 
 struct XCONTENT_AGGREGATE_DATA : XCONTENT_DATA {
-  be<uint64_t> unk134;  // XUID?
+  be<uint64_t> profile_xuid;
   be<uint32_t> title_id;
 
   bool operator==(const XCONTENT_AGGREGATE_DATA& other) const {
@@ -151,7 +151,8 @@ class ContentManager {
 
   std::vector<XCONTENT_AGGREGATE_DATA> ListContent(uint32_t device_id,
                                                    XContentType content_type,
-                                                   uint32_t title_id = -1);
+                                                   uint32_t title_id = -1,
+                                                   uint64_t xuid = 0);
 
   std::unique_ptr<ContentPackage> ResolvePackage(
       const std::string_view root_name, const XCONTENT_AGGREGATE_DATA& data,
@@ -169,12 +170,12 @@ class ContentManager {
   X_RESULT SetContentThumbnail(const XCONTENT_AGGREGATE_DATA& data,
                                std::vector<uint8_t> buffer);
   X_RESULT DeleteContent(const XCONTENT_AGGREGATE_DATA& data);
-  std::filesystem::path ResolveGameUserContentPath();
   bool IsContentOpen(const XCONTENT_AGGREGATE_DATA& data) const;
 
  private:
   std::filesystem::path ResolvePackageRoot(XContentType content_type,
-                                           uint32_t title_id = -1);
+                                           uint32_t title_id = -1,
+                                           uint64_t xuid = 0);
   std::filesystem::path ResolvePackagePath(const XCONTENT_AGGREGATE_DATA& data);
 
   KernelState* kernel_state_;

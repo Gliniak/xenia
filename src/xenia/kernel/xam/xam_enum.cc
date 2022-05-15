@@ -30,7 +30,7 @@ namespace xam {
 uint32_t xeXamEnumerate(uint32_t handle, uint32_t flags, lpvoid_t buffer_ptr,
                         uint32_t buffer_size, uint32_t* items_returned,
                         uint32_t overlapped_ptr) {
-  assert_true(flags == 0);
+  //assert_true(flags == 0);
 
   auto e = kernel_state()->object_table()->LookupObject<XEnumerator>(handle);
   if (!e) {
@@ -68,7 +68,7 @@ uint32_t xeXamEnumerate(uint32_t handle, uint32_t flags, lpvoid_t buffer_ptr,
     return X_ERROR_IO_PENDING;
   } else {
     assert_always();
-    return X_ERROR_INVALID_PARAMETER;
+    return X_ERROR_FUNCTION_FAILED;
   }
 }
 
@@ -85,6 +85,16 @@ dword_result_t XamEnumerate_entry(dword_t handle, dword_t flags,
   return result;
 }
 DECLARE_XAM_EXPORT1(XamEnumerate, kNone, kImplemented);
+
+dword_result_t XamProfileEnumerate_entry(dword_t handle, dword_t flags,
+                                         lpvoid_t buffer,
+                                         pointer_t<XAM_OVERLAPPED> overlapped) {
+  uint32_t dummy;
+  auto result = xeXamEnumerate(handle, flags, buffer, 0,
+                               !overlapped ? &dummy : nullptr, overlapped);
+  return result;
+}
+DECLARE_XAM_EXPORT1(XamProfileEnumerate, kUserProfiles, kImplemented);
 
 dword_result_t XamCreateEnumeratorHandle_entry(unknown_t unk1, unknown_t unk2,
                                                unknown_t unk3, unknown_t unk4,

@@ -852,7 +852,7 @@ void EmulatorWindow::FileClose() {
 void EmulatorWindow::ShowContentDirectory() {
   std::filesystem::path target_path;
 
-  auto content_root = emulator_->content_root();
+  auto content_root = emulator_->primary_hdd_root();
   if (!emulator_->is_title_open() || !emulator_->kernel_state()) {
     target_path = content_root;
   } else {

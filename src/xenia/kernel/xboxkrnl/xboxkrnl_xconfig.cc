@@ -54,6 +54,8 @@ X_STATUS xeExGetXConfigSetting(uint16_t category, uint16_t setting,
     case 0x0002:
       // XCONFIG_SECURED_CATEGORY
       switch (setting) {
+        case 0x0001:
+          break;
         case 0x0002:  // XCONFIG_SECURED_AV_REGION
           setting_size = 4;
           xe::store_and_swap<uint32_t>(value, 0x00001000);  // USA/Canada
@@ -77,6 +79,8 @@ X_STATUS xeExGetXConfigSetting(uint16_t category, uint16_t setting,
           // TODO(benvanik): get this value.
           xe::store_and_swap<uint32_t>(value, 0);
           break;
+        case 0x0008:
+          break;
         case 0x0009:  // XCONFIG_USER_LANGUAGE
           setting_size = 4;
           xe::store_and_swap<uint32_t>(value, cvars::user_language);
@@ -88,15 +92,25 @@ X_STATUS xeExGetXConfigSetting(uint16_t category, uint16_t setting,
         case 0x000C:  // XCONFIG_USER_RETAIL_FLAGS
           setting_size = 4;
           // TODO(benvanik): get this value.
-          xe::store_and_swap<uint32_t>(value, 0);
+          xe::store_and_swap<uint32_t>(value, 0x40);
           break;
         case 0x000E:  // XCONFIG_USER_COUNTRY
           setting_size = 1;
           value[0] = static_cast<uint8_t>(cvars::user_country);
           break;
+        case 0x000F:
+          break;
+        case 0x0022:
+          break;
         default:
           assert_unhandled_case(setting);
           return X_STATUS_INVALID_PARAMETER_2;
+      }
+      break;
+    case 0x0007:
+      switch (setting) {
+        case 0x0004:
+          break;
       }
       break;
     default:

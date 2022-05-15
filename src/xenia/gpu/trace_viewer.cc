@@ -123,7 +123,7 @@ bool TraceViewer::Setup() {
   }
 
   // Create the emulator but don't initialize so we can setup the window.
-  emulator_ = std::make_unique<Emulator>("", "", "", "");
+  emulator_ = std::make_unique<Emulator>("", "");
   X_STATUS result = emulator_->Setup(
       window_.get(), nullptr, nullptr,
       [this]() { return CreateGraphicsSystem(); }, nullptr);

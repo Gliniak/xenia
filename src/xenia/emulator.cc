@@ -35,8 +35,8 @@
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/gameinfo_utils.h"
-#include "xenia/kernel/xam/xdbf/xdbf.h"
 #include "xenia/kernel/xam/xam_module.h"
+#include "xenia/kernel/xam/xdbf/xdbf.h"
 #include "xenia/kernel/xbdm/xbdm_module.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
 #include "xenia/memory.h"
@@ -60,6 +60,19 @@ DEFINE_string(
     "module.",
     "General");
 
+DEFINE_path(primary_hdd_root, "",
+            "Primary storage that is being used to store profiles, savefiles, "
+            "TUs and other media",
+            "Storage");
+DEFINE_path(
+    secondary_hdd_root, "",
+    "Secondary storage that is being used to store profiles, savefiles, "
+    "TUs and other media",
+    "Storage");
+
+DEFINE_bool(mount_scratch, false, "Enable scratch mount", "Storage");
+DEFINE_bool(mount_cache, false, "Enable cache mount", "Storage");
+
 namespace xe {
 
 using namespace xe::literals;
@@ -74,17 +87,14 @@ Emulator::GameConfigLoadCallback::~GameConfigLoadCallback() {
 }
 
 Emulator::Emulator(const std::filesystem::path& command_line,
-                   const std::filesystem::path& storage_root,
-                   const std::filesystem::path& content_root,
-                   const std::filesystem::path& cache_root)
+                   const std::filesystem::path& storage_root)
     : on_launch(),
       on_terminate(),
       on_exit(),
       command_line_(command_line),
       storage_root_(storage_root),
-      content_root_(content_root),
-      profile_root_(content_root / "profile"),
-      cache_root_(cache_root),
+      primary_hdd_root_(cvars::primary_hdd_root),
+      secondary_hdd_root_(cvars::secondary_hdd_root),
       title_name_(),
       title_version_(),
       display_window_(nullptr),
@@ -266,6 +276,54 @@ X_STATUS Emulator::TerminateTitle() {
   return X_STATUS_SUCCESS;
 }
 
+X_STATUS Emulator::InitializeMountDevice(const std::string_view mount_path,
+                                         const std::string_view host_path) {
+  auto device =
+      std::make_unique<xe::vfs::HostPathDevice>(mount_path, host_path, false);
+
+  if (!device->Initialize()) {
+    XELOGE("Unable to scan {} path", mount_path);
+    return X_ERROR_FUNCTION_FAILED;
+  }
+
+  if (!file_system_->RegisterDevice(std::move(device))) {
+    XELOGE("Unable to register scratch path");
+    return X_ERROR_FUNCTION_FAILED;
+  }
+
+  bool result =
+      file_system_->RegisterSymbolicLink(host_path.data(), mount_path);
+  return result ? X_STATUS_SUCCESS : X_ERROR_FUNCTION_FAILED;
+}
+
+X_STATUS Emulator::InitializeMountDevices() {
+  if (cvars::mount_scratch) {
+    InitializeMountDevice("\\SCRATCH", "scratch");
+  }
+
+  if (cvars::mount_cache) {
+    InitializeMountDevice("\\CACHE0", "cache0");
+    InitializeMountDevice("\\CACHE1", "cache1");
+    InitializeMountDevice("\\CACHE", "cache");
+  }
+
+  InitializeMountDevice(
+      "\\FLASH", (storage_root_ / std::filesystem::path("Flash")).u8string());
+
+  std::filesystem::path main_hdd_path = primary_hdd_root_;
+  if (main_hdd_path.empty()) {
+    main_hdd_path = storage_root_ / std::filesystem::path("content");
+  }
+  InitializeMountDevice("\\Device\\Harddisk0\\Partition1",
+                        main_hdd_path.u8string());
+
+  if (!secondary_hdd_root_.empty()) {
+    InitializeMountDevice("\\Device\\Mass0", secondary_hdd_root_.u8string());
+  }
+
+  return X_STATUS_SUCCESS;
+}
+
 X_STATUS Emulator::LaunchPath(const std::filesystem::path& path) {
   // Launch based on file type.
   // This is a silly guess based on file extension.
@@ -291,7 +349,7 @@ X_STATUS Emulator::LaunchXexFile(const std::filesystem::path& path) {
   // and then get that symlinked to game:\, so
   // -> game:\foo.xex
 
-  auto mount_path = "\\Device\\Harddisk0\\Partition1";
+  auto mount_path = "\\GAME:";
 
   // Register the local directory in the virtual filesystem.
   auto parent_path = path.parent_path();
@@ -743,6 +801,24 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     file_system_->RegisterDevice(std::move(null_device));
   }
 
+  // Setup media root.
+  auto media_root = storage_root_ / "media";
+  if (!std::filesystem::exists(media_root)) {
+    std::filesystem::create_directories(media_root);
+  }
+  std::string media_device_path = std::string("\\SystemRoot");
+  auto media_device = std::make_unique<vfs::HostPathDevice>(
+      media_device_path, media_root, false);  // TODO: is it read only?
+  if (!media_device->Initialize()) {
+    xe::FatalError("Unable to mount media root.");
+    return X_STATUS_NO_SUCH_FILE;
+  }
+  if (!file_system_->RegisterDevice(std::move(media_device))) {
+    xe::FatalError("Unable to register media device.");
+    return X_STATUS_NO_SUCH_FILE;
+  }
+  file_system_->RegisterSymbolicLink("media:", media_device_path);
+
   // Reset state.
   title_id_ = std::nullopt;
   title_name_ = "";
@@ -778,8 +854,8 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
   // playing before the video can be seen if doing this in parallel with the
   // main thread.
   on_shader_storage_initialization(true);
-  graphics_system_->InitializeShaderStorage(cache_root_, title_id_.value(),
-                                            true);
+  graphics_system_->InitializeShaderStorage(primary_hdd_root_,
+                                            title_id_.value(), true);
   on_shader_storage_initialization(false);
 
   auto main_thread = kernel_state_->LaunchModule(module);

@@ -56,12 +56,13 @@ KernelState::KernelState(Emulator* emulator)
 
   app_manager_ = std::make_unique<xam::AppManager>();
 
-  auto content_root = emulator_->content_root();
+  auto content_root = emulator_->primary_hdd_root();
   if (!content_root.empty()) {
     content_root = std::filesystem::absolute(content_root);
   }
+  content_root /= std::filesystem::path("content");
   content_manager_ = std::make_unique<xam::ContentManager>(this, content_root);
-  user_profile_ = std::make_unique<xam::UserProfile>(emulator_->profile_root());
+  profile_manager_ = std::make_unique<xam::ProfileManager>(this, content_root);
 
   assert_null(shared_kernel_state_);
   shared_kernel_state_ = this;
@@ -70,6 +71,7 @@ KernelState::KernelState(Emulator* emulator)
   tls_bitmap_.Resize(2048);
 
   xam::AppManager::RegisterApps(this, app_manager_.get());
+  profile_manager_->Login();
 }
 
 KernelState::~KernelState() {
@@ -291,7 +293,11 @@ void KernelState::SetExecutableModule(object_ref<UserModule> module) {
     title_spa_data_ = xam::xdbf::SpaFile();
     title_spa_data_.Read(memory_->TranslateVirtual(resource_data),
                          resource_size);
-    user_profile()->SetTitleSpaData(title_spa_data_);
+
+    if (profile_manager_->IsAnyProfileSignedIn()) {
+      profile_manager_->GetCurrentlyLoggedProfile()->SetTitleSpaData(
+          title_spa_data_);
+    }
   }
 
   assert_zero(process_info_block_address_);

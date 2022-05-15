@@ -261,5 +261,40 @@ std::vector<FileInfo> ListFiles(const std::filesystem::path& path) {
   return result;
 }
 
+std::vector<FileInfo> ListFilesWithPattern(const std::filesystem::path& path,
+                                           const std::regex pattern,
+                                           bool recursive) {
+  std::vector<FileInfo> files = ListFiles(path);
+  std::vector<FileInfo> pattern_matched_files;
+
+  if (recursive) {
+    for (const FileInfo entry : files) {
+      if (entry.type != xe::filesystem::FileInfo::Type::kDirectory) {
+        continue;
+      }
+
+      // Kinda sketchy, but normally HDD within content directory
+      // only contains directories with 16 or 8 char long name
+      if (entry.name.filename().u8string().length() != 8 &&
+          entry.name.filename().u8string().length() != 16) {
+        continue;
+      }
+      std::vector<FileInfo> entry_files =
+          ListFilesWithPattern(entry.path / entry.name, pattern, true);
+      pattern_matched_files.insert(pattern_matched_files.end(),
+                                   entry_files.cbegin(), entry_files.cend());
+    }
+  }
+
+  // Copy entries that match regex
+  std::copy_if(
+      files.cbegin(), files.cend(), std::back_inserter(pattern_matched_files),
+      [pattern](FileInfo file) {
+        return std::regex_match(file.name.filename().string(), pattern);
+      });
+
+  return pattern_matched_files;
+}
+
 }  // namespace filesystem
 }  // namespace xe

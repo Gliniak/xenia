@@ -14,6 +14,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <numeric>
 
 #include "xenia/base/byte_stream.h"
 #include "xenia/xbox.h"
@@ -22,6 +23,38 @@
 namespace xe {
 namespace kernel {
 namespace xam {
+
+constexpr uint32_t kDashboardID = 0xFFFE07D1;
+const static std::string kDashboardStringID =
+    fmt::format("{:08X}", kDashboardID);
+
+// https://github.com/jogolden/testdev/blob/master/xkelib/xam/_xamext.h#L68
+enum class XTileType {
+  kAchievement,
+  kGameIcon,
+  kGamerTile,
+  kGamerTileSmall,
+  kLocalGamerTile,
+  kLocalGamerTileSmall,
+  kBkgnd,
+  kAwardedGamerTile,
+  kAwardedGamerTileSmall,
+  kGamerTileByImageId,
+  kPersonalGamerTile,
+  kPersonalGamerTileSmall,
+  kGamerTileByKey,
+  kAvatarGamerTile,
+  kAvatarGamerTileSmall,
+  kAvatarFullBody
+};
+
+// TODO: find filenames of other tile types that are stored in profile
+static const std::map<XTileType, std::string> kTileFileNames = {
+    {XTileType::kPersonalGamerTile, "tile_64.png"},
+    {XTileType::kPersonalGamerTileSmall, "tile_32.png"},
+    {XTileType::kAvatarGamerTile, "avtr_64.png"},
+    {XTileType::kAvatarGamerTileSmall, "avtr_32.png"},
+};
 
 // from https://github.com/xemio/testdev/blob/master/xkelib/xam/_xamext.h
 #pragma pack(push, 4)
@@ -140,215 +173,55 @@ static_assert_size(X_USER_PROFILE_SETTING_DATA, 16);
 
 struct X_USER_PROFILE_SETTING {
   xe::be<uint32_t> from;
-  xe::be<uint32_t> unk04;
+  //xe::be<uint32_t> unk04;
   union {
     xe::be<uint32_t> user_index;
     xe::be<uint64_t> xuid;
   };
-  xe::be<uint32_t> setting_id;
-  xe::be<uint32_t> unk14;
-  union {
-    uint8_t data_bytes[sizeof(X_USER_PROFILE_SETTING_DATA)];
-    X_USER_PROFILE_SETTING_DATA data;
-  };
+  xdbf::X_XDBF_GPD_SETTING setting;
 };
 static_assert_size(X_USER_PROFILE_SETTING, 40);
 
+
+
 class UserProfile {
  public:
-  class SettingByteStream : public ByteStream {
-   public:
-    SettingByteStream(uint32_t ptr, uint8_t* data, size_t data_length,
-                      size_t offset = 0)
-        : ByteStream(data, data_length, offset), ptr_(ptr) {}
+  UserProfile(const uint64_t xuid, X_XAMACCOUNTINFO* account_info,
+              xam::xdbf::GpdFile dash_gpd,
+              std::unordered_map<uint32_t, xdbf::GpdFile> titles_gpd);
 
-    uint32_t ptr() const { return static_cast<uint32_t>(ptr_ + offset()); }
+  UserProfile(const uint64_t xuid, const X_XAMACCOUNTINFO* account_info);
 
-   private:
-    uint32_t ptr_;
-  };
-  struct Setting {
-    enum class Type {
-      CONTENT = 0,
-      INT32 = 1,
-      INT64 = 2,
-      DOUBLE = 3,
-      WSTRING = 4,
-      FLOAT = 5,
-      BINARY = 6,
-      DATETIME = 7,
-      UNSET = 0xFF,
-    };
-    union Key {
-      uint32_t value;
-      struct {
-        uint32_t id : 14;
-        uint32_t unk : 2;
-        uint32_t size : 12;
-        uint32_t type : 4;
-      };
-    };
-    uint32_t setting_id;
-    Type type;
-    size_t size;
-    bool is_set;
-    uint32_t loaded_title_id;
-    Setting(uint32_t setting_id, Type type, size_t size, bool is_set)
-        : setting_id(setting_id),
-          type(type),
-          size(size),
-          is_set(is_set),
-          loaded_title_id(0) {}
-    virtual void Append(X_USER_PROFILE_SETTING_DATA* data,
-                        SettingByteStream* stream) {
-      data->type = static_cast<uint8_t>(type);
-    }
-    virtual std::vector<uint8_t> Serialize() const {
-      return std::vector<uint8_t>();
-    }
-    virtual void Deserialize(std::vector<uint8_t>) {}
-    bool is_title_specific() const { return (setting_id & 0x3F00) == 0x3F00; }
-  };
-  struct Int32Setting : public Setting {
-    Int32Setting(uint32_t setting_id, int32_t value)
-        : Setting(setting_id, Type::INT32, 4, true), value(value) {}
-    int32_t value;
-    void Append(X_USER_PROFILE_SETTING_DATA* data,
-                SettingByteStream* stream) override {
-      Setting::Append(data, stream);
-      data->s32 = value;
-    }
-  };
-  struct Int64Setting : public Setting {
-    Int64Setting(uint32_t setting_id, int64_t value)
-        : Setting(setting_id, Type::INT64, 8, true), value(value) {}
-    int64_t value;
-    void Append(X_USER_PROFILE_SETTING_DATA* data,
-                SettingByteStream* stream) override {
-      Setting::Append(data, stream);
-      data->s64 = value;
-    }
-  };
-  struct DoubleSetting : public Setting {
-    DoubleSetting(uint32_t setting_id, double value)
-        : Setting(setting_id, Type::DOUBLE, 8, true), value(value) {}
-    double value;
-    void Append(X_USER_PROFILE_SETTING_DATA* data,
-                SettingByteStream* stream) override {
-      Setting::Append(data, stream);
-      data->f64 = value;
-    }
-  };
-  struct UnicodeSetting : public Setting {
-    UnicodeSetting(uint32_t setting_id, const std::u16string& value)
-        : Setting(setting_id, Type::WSTRING, 8, true), value(value) {}
-    std::u16string value;
-    void Append(X_USER_PROFILE_SETTING_DATA* data,
-                SettingByteStream* stream) override {
-      Setting::Append(data, stream);
-      if (value.empty()) {
-        data->unicode.size = 0;
-        data->unicode.ptr = 0;
-      } else {
-        size_t count = value.size() + 1;
-        size_t size = 2 * count;
-        assert_true(size <= std::numeric_limits<uint32_t>::max());
-        data->unicode.size = static_cast<uint32_t>(size);
-        data->unicode.ptr = stream->ptr();
-        auto buffer =
-            reinterpret_cast<uint16_t*>(&stream->data()[stream->offset()]);
-        stream->Advance(size);
-        xe::copy_and_swap(buffer, (uint16_t*)value.data(), count);
-      }
-    }
-  };
-  struct FloatSetting : public Setting {
-    FloatSetting(uint32_t setting_id, float value)
-        : Setting(setting_id, Type::FLOAT, 4, true), value(value) {}
-    float value;
-    void Append(X_USER_PROFILE_SETTING_DATA* data,
-                SettingByteStream* stream) override {
-      Setting::Append(data, stream);
-      data->f32 = value;
-    }
-  };
-  struct BinarySetting : public Setting {
-    BinarySetting(uint32_t setting_id)
-        : Setting(setting_id, Type::BINARY, 8, false), value() {}
-    BinarySetting(uint32_t setting_id, const std::vector<uint8_t>& value)
-        : Setting(setting_id, Type::BINARY, 8, true), value(value) {}
-    std::vector<uint8_t> value;
-    void Append(X_USER_PROFILE_SETTING_DATA* data,
-                SettingByteStream* stream) override {
-      Setting::Append(data, stream);
-      if (value.empty()) {
-        data->binary.size = 0;
-        data->binary.ptr = 0;
-      } else {
-        size_t size = value.size();
-        assert_true(size <= std::numeric_limits<uint32_t>::max());
-        data->binary.size = static_cast<uint32_t>(size);
-        data->binary.ptr = stream->ptr();
-        stream->Write(value.data(), size);
-      }
-    }
-    std::vector<uint8_t> Serialize() const override {
-      return std::vector<uint8_t>(value.data(), value.data() + value.size());
-    }
-    void Deserialize(std::vector<uint8_t> data) override {
-      value = data;
-      is_set = true;
-    }
-  };
-  struct DateTimeSetting : public Setting {
-    DateTimeSetting(uint32_t setting_id, int64_t value)
-        : Setting(setting_id, Type::DATETIME, 8, true), value(value) {}
-    int64_t value;
-    void Append(X_USER_PROFILE_SETTING_DATA* data,
-                SettingByteStream* stream) override {
-      Setting::Append(data, stream);
-      data->filetime = value;
-    }
-  };
-
-  static bool DecryptAccountFile(const uint8_t* data, X_XAMACCOUNTINFO* output,
-                                 bool devkit = false);
-
-  static void EncryptAccountFile(const X_XAMACCOUNTINFO* input, uint8_t* output,
-                                 bool devkit = false);
-
-  UserProfile(const std::filesystem::path profile_path);
-
-  uint64_t xuid() const { return account_.xuid_online; }
+  X_XAMACCOUNTINFO account() const { return account_; }
+  uint64_t xuid() const { return offline_xuid; }
+  uint64_t xuid_online() const { return account_.xuid_online; }
   std::string name() const { return account_.GetGamertagString(); }
   uint32_t signin_state() const { return 1; }
   uint32_t type() const { return 1 | 2; /* local | online profile? */ }
 
-  void AddSetting(std::unique_ptr<Setting> setting);
-  Setting* GetSetting(uint32_t setting_id);
+  uint32_t GetAmountOfPlayedTitles() const {
+    return (uint32_t)title_gpds_.size();
+  }
 
   xdbf::GpdFile* SetTitleSpaData(const xdbf::SpaFile& spa_data);
   xdbf::GpdFile* GetTitleGpd(const uint32_t title_id = -1);
+  xdbf::GpdFile* GetDashboardGpd() { return &dash_gpd_; }
 
   void GetTitles(std::vector<xdbf::GpdFile*>& titles);
   bool UpdateTitleGpd(const uint32_t title_id = -1);
   bool UpdateAllGpds();
+  void LoadProfile(const uint64_t xuid);
  private:
-  void LoadProfile();
-  void LoadAccount();
-  void LoadDashboardGpd();
-  void LoadTitlesGpd();
+  void LoadDefaultSettings();
 
   bool UpdateGpd(uint32_t title_id, xdbf::GpdFile& gpd_data);
+  bool AddSettingIfNotExist(xdbf::Setting& setting);
 
-  std::filesystem::path profile_path_;
+  xdbf::kAchievementsStats RecalculateAchievementsStats(const uint32_t title_id,
+                                                  xdbf::GpdFile& gpd_data);
 
   X_XAMACCOUNTINFO account_;
-  std::vector<std::unique_ptr<Setting>> setting_list_;
-  std::unordered_map<uint32_t, Setting*> settings_;
-
-  void LoadSetting(UserProfile::Setting*);
-  void SaveSetting(UserProfile::Setting*);
+  uint64_t offline_xuid;
 
   std::unordered_map<uint32_t, xdbf::GpdFile> title_gpds_;
   xdbf::GpdFile dash_gpd_;

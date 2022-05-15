@@ -269,11 +269,15 @@ dword_result_t XamShowMessageBoxUI_entry(
     dword_t user_index, lpu16string_t title_ptr, lpu16string_t text_ptr,
     dword_t button_count, lpdword_t button_ptrs, dword_t active_button,
     dword_t flags, lpdword_t result_ptr, pointer_t<XAM_OVERLAPPED> overlapped) {
-  std::string title;
+  std::string title = "";
+  std::string text = "";
+
   if (title_ptr) {
     title = xe::to_utf8(title_ptr.value());
-  } else {
-    title = "";  // TODO(gibbed): default title based on flags?
+  }
+
+  if (text_ptr) {
+    text = xe::to_utf8(text_ptr.value());
   }
 
   std::vector<std::string> buttons;
@@ -315,8 +319,7 @@ dword_result_t XamShowMessageBoxUI_entry(
     const Emulator* emulator = kernel_state()->emulator();
     ui::ImGuiDrawer* imgui_drawer = emulator->imgui_drawer();
     result = xeXamDispatchDialog<MessageBoxDialog>(
-        new MessageBoxDialog(imgui_drawer, title, xe::to_utf8(text_ptr.value()),
-                             buttons, active_button),
+        new MessageBoxDialog(imgui_drawer, title, text, buttons, active_button),
         close, overlapped);
   }
   return result;
@@ -496,6 +499,75 @@ void XamShowDirtyDiscErrorUI_entry(dword_t user_index) {
   exit(1);
 }
 DECLARE_XAM_EXPORT1(XamShowDirtyDiscErrorUI, kUI, kImplemented);
+
+dword_result_t XamShowCreateProfileUI_entry(dword_t user_index) {
+  // Broadcast XN_SYS_UI = true
+  kernel_state()->BroadcastNotification(0x9, true);
+
+  std::u16string out_text;
+
+  ++xam_dialogs_shown_;
+
+  const Emulator* emulator = kernel_state()->emulator();
+  ui::ImGuiDrawer* imgui_drawer = emulator->imgui_drawer();
+  xeXamDispatchDialog<KeyboardInputDialog>(
+      new KeyboardInputDialog(imgui_drawer, "Profile Creation",
+                              "Choose a gamertag", "", 15),
+      nullptr, 0);
+
+  --xam_dialogs_shown_;
+
+  // Broadcast XN_SYS_UI = false
+  kernel_state()->BroadcastNotification(0x9, false);
+
+  X_XAMACCOUNTINFO account;
+  memset(&account, 0, sizeof(X_XAMACCOUNTINFO));
+  memcpy(account.gamertag, out_text.c_str(),
+         std::min((uint32_t)out_text.size(), 15u) * sizeof(char16_t));
+
+  // TODO: the following does seem to trigger dash and make it try reloading the
+  // profile, but some reason it won't load properly until restart (no
+  // gamertag/gamerscore/games shown, etc)
+  // maybe need to set some notification for it or something?
+  kernel_state()->profile_manager()->CreateProfile(&account);
+
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamShowCreateProfileUI, kUI, kImplemented);
+
+dword_result_t XamShowSigninUIp_entry(dword_t unk, dword_t unk_mask) {
+  // Mask values vary. Probably matching user types? Local/remote?
+
+  // To fix game modes that display a 4 profile signin UI (even if playing
+  // alone):
+  // XN_SYS_SIGNINCHANGED
+  auto profiles = kernel_state()->profile_manager()->GetProfiles();
+
+  if (!profiles.empty()) {
+    // auto xuid = (*profiles.cbegin()).second->xuid();
+    // kernel_state()->profile_manager()->Login(xuid);
+    // Games seem to sit and loop until we trigger this notification:
+  }
+  // XN_SYS_UI (off)
+  kernel_state()->BroadcastNotification(0x00000009, 0);
+  kernel_state()->BroadcastNotification(0x0000000A, 1);
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamShowSigninUIp, kUI, kStub);
+
+dword_result_t XamShowSigninUI_entry(dword_t unk, dword_t unk_mask) {
+  // Mask values vary. Probably matching user types? Local/remote?
+
+  // To fix game modes that display a 4 profile signin UI (even if playing
+  // alone):
+  // XN_SYS_SIGNINCHANGED
+  kernel_state()->BroadcastNotification(0x0000000A, 1);
+  // Games seem to sit and loop until we trigger this notification:
+  // XN_SYS_UI (off)
+  kernel_state()->BroadcastNotification(0x00000009, 0);
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamShowSigninUI, kUI, kStub);
 
 dword_result_t XamShowPartyUI_entry(unknown_t r3, unknown_t r4) {
   return X_ERROR_FUNCTION_FAILED;

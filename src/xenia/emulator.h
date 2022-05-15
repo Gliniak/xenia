@@ -86,9 +86,7 @@ class Emulator {
   };
 
   explicit Emulator(const std::filesystem::path& command_line,
-                    const std::filesystem::path& storage_root,
-                    const std::filesystem::path& content_root,
-                    const std::filesystem::path& cache_root);
+                    const std::filesystem::path& storage_root);
   ~Emulator();
 
   // Full command line used when launching the process.
@@ -97,14 +95,9 @@ class Emulator {
   // Folder persistent internal emulator data is stored in.
   const std::filesystem::path& storage_root() const { return storage_root_; }
 
-  // Folder guest content is stored in.
-  const std::filesystem::path& content_root() const { return content_root_; }
-
-  // Folder guest profile content is stored in.
-  const std::filesystem::path& profile_root() const { return profile_root_; }
-
-  // Folder files safe to remove without significant side effects are stored in.
-  const std::filesystem::path& cache_root() const { return cache_root_; }
+  const std::filesystem::path& primary_hdd_root() const {
+    return primary_hdd_root_;
+  }
 
   // Name of the title in the default language.
   const std::string& title_name() const { return title_name_; }
@@ -171,6 +164,10 @@ class Emulator {
       std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
           input_driver_factory);
 
+  X_STATUS InitializeMountDevice(const std::string_view mount_path,
+                                 const std::string_view host_path);
+  X_STATUS InitializeMountDevices();
+
   // Terminates the currently running title.
   X_STATUS TerminateTitle();
 
@@ -222,9 +219,8 @@ class Emulator {
 
   std::filesystem::path command_line_;
   std::filesystem::path storage_root_;
-  std::filesystem::path content_root_;
-  std::filesystem::path profile_root_;
-  std::filesystem::path cache_root_;
+  std::filesystem::path primary_hdd_root_;
+  std::filesystem::path secondary_hdd_root_;
 
   std::string title_name_;
   std::string title_version_;

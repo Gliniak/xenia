@@ -183,7 +183,7 @@ bool UserModule::TryMountUpdatePackage(const std::string& module_path) {
   auto content_manager = kernel_state()->content_manager();
 
   auto update_packages =
-      content_manager->ListContent(0, XContentType::kInstaller);
+      content_manager->ListContent(0, XContentType::kInstaller, -1, 0);
 
   auto stfs_header = std::make_unique<vfs::StfsHeader>();
 

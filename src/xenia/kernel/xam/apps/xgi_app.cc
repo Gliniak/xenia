@@ -61,7 +61,9 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
       XELOGD("XGIUserWriteAchievements({:08X}, {:08X})", achievement_count,
              achievements_ptr);
 
-      auto* game_gpd = kernel_state_->user_profile()->GetTitleGpd();
+      auto* game_gpd = kernel_state_->profile_manager()
+                           ->GetCurrentlyLoggedProfile()
+                           ->GetTitleGpd();
       if (!game_gpd) {
         XELOGE("XGIUserWriteAchievements failed, no game GPD set?");
         return X_ERROR_SUCCESS;
@@ -78,13 +80,20 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
                    xe::to_utf8(ach.label), ach.gamerscore,
                    xe::to_utf8(ach.description));
             ach.Unlock(false);
+
+            auto entry = kernel_state_->achievement_icon(ach.image_id);
+            if (entry) {
+              game_gpd->UpdateEntry(*entry);
+            }
             game_gpd->UpdateAchievement(ach);
             modified = true;
           }
         }
       }
       if (modified) {
-        kernel_state_->user_profile()->UpdateTitleGpd();
+        kernel_state_->profile_manager()
+            ->GetCurrentlyLoggedProfile()
+            ->UpdateTitleGpd();
       }
       return X_E_SUCCESS;
     }

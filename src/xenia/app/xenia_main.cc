@@ -70,22 +70,6 @@ DEFINE_path(
     "to use the path preferred for the OS, such as the documents folder, or "
     "the emulator executable directory if portable.txt is present in it.",
     "Storage");
-DEFINE_path(
-    content_root, "",
-    "Root path for guest content storage (saves, etc.), or empty to use the "
-    "content folder under the storage root.",
-    "Storage");
-DEFINE_path(
-    cache_root, "",
-    "Root path for files used to speed up certain parts of the emulator or the "
-    "game. These files may be persistent, but they can be deleted without "
-    "major side effects such as progress loss. If empty, the cache folder "
-    "under the storage root, or, if available, the cache directory preferred "
-    "for the OS, will be used.",
-    "Storage");
-
-DEFINE_bool(mount_scratch, false, "Enable scratch mount", "Storage");
-DEFINE_bool(mount_cache, false, "Enable cache mount", "Storage");
 
 DEFINE_transient_path(target, "",
                       "Specifies the target .xex or .iso to execute.",
@@ -311,7 +295,7 @@ bool EmulatorApp::OnInitialize() {
         !std::filesystem::exists(storage_root / "portable.txt")) {
       storage_root = xe::filesystem::GetUserFolder();
 #if defined(XE_PLATFORM_WIN32) || defined(XE_PLATFORM_GNU_LINUX)
-      storage_root = storage_root / "Xenia";
+      storage_root = storage_root / "Xenia-Canary";
 #else
       // TODO(Triang3l): Point to the app's external storage "files" directory
       // on Android.
@@ -325,34 +309,6 @@ bool EmulatorApp::OnInitialize() {
 
   config::SetupConfig(storage_root);
 
-  std::filesystem::path content_root = cvars::content_root;
-  if (content_root.empty()) {
-    content_root = storage_root / "content";
-  } else {
-    // If content root isn't an absolute path, then it should be relative to the
-    // storage root.
-    if (!content_root.is_absolute()) {
-      content_root = storage_root / content_root;
-    }
-  }
-  content_root = std::filesystem::absolute(content_root);
-  XELOGI("Content root: {}", xe::path_to_utf8(content_root));
-
-  std::filesystem::path cache_root = cvars::cache_root;
-  if (cache_root.empty()) {
-    cache_root = storage_root / "cache";
-    // TODO(Triang3l): Point to the app's external storage "cache" directory on
-    // Android.
-  } else {
-    // If content root isn't an absolute path, then it should be relative to the
-    // storage root.
-    if (!cache_root.is_absolute()) {
-      cache_root = storage_root / cache_root;
-    }
-  }
-  cache_root = std::filesystem::absolute(cache_root);
-  XELOGI("Cache root: {}", xe::path_to_utf8(cache_root));
-
   if (cvars::discord) {
     discord::DiscordPresence::Initialize();
     discord::DiscordPresence::NotPlaying();
@@ -360,7 +316,7 @@ bool EmulatorApp::OnInitialize() {
 
   // Create the emulator but don't initialize so we can setup the window.
   emulator_ =
-      std::make_unique<Emulator>("", storage_root, content_root, cache_root);
+      std::make_unique<Emulator>("", storage_root);
 
   // Main emulator display window.
   emulator_window_ = EmulatorWindow::Create(emulator_.get(), app_context());
@@ -417,62 +373,7 @@ void EmulatorApp::EmulatorThread() {
   app_context().CallInUIThread(
       [this]() { emulator_window_->SetupGraphicsSystemPresenterPainting(); });
 
-  if (cvars::mount_scratch) {
-    auto scratch_device = std::make_unique<xe::vfs::HostPathDevice>(
-        "\\SCRATCH", "scratch", false);
-    if (!scratch_device->Initialize()) {
-      XELOGE("Unable to scan scratch path");
-    } else {
-      if (!emulator_->file_system()->RegisterDevice(
-              std::move(scratch_device))) {
-        XELOGE("Unable to register scratch path");
-      } else {
-        emulator_->file_system()->RegisterSymbolicLink("scratch:", "\\SCRATCH");
-      }
-    }
-  }
-
-  if (cvars::mount_cache) {
-    auto cache0_device =
-        std::make_unique<xe::vfs::HostPathDevice>("\\CACHE0", "cache0", false);
-    if (!cache0_device->Initialize()) {
-      XELOGE("Unable to scan cache0 path");
-    } else {
-      if (!emulator_->file_system()->RegisterDevice(std::move(cache0_device))) {
-        XELOGE("Unable to register cache0 path");
-      } else {
-        emulator_->file_system()->RegisterSymbolicLink("cache0:", "\\CACHE0");
-      }
-    }
-
-    auto cache1_device =
-        std::make_unique<xe::vfs::HostPathDevice>("\\CACHE1", "cache1", false);
-    if (!cache1_device->Initialize()) {
-      XELOGE("Unable to scan cache1 path");
-    } else {
-      if (!emulator_->file_system()->RegisterDevice(std::move(cache1_device))) {
-        XELOGE("Unable to register cache1 path");
-      } else {
-        emulator_->file_system()->RegisterSymbolicLink("cache1:", "\\CACHE1");
-      }
-    }
-
-    // Some (older?) games try accessing cache:\ too
-    // NOTE: this must be registered _after_ the cache0/cache1 devices, due to
-    // substring/start_with logic inside VirtualFileSystem::ResolvePath, else
-    // accesses to those devices will go here instead
-    auto cache_device =
-        std::make_unique<xe::vfs::HostPathDevice>("\\CACHE", "cache", false);
-    if (!cache_device->Initialize()) {
-      XELOGE("Unable to scan cache path");
-    } else {
-      if (!emulator_->file_system()->RegisterDevice(std::move(cache_device))) {
-        XELOGE("Unable to register cache path");
-      } else {
-        emulator_->file_system()->RegisterSymbolicLink("cache:", "\\CACHE");
-      }
-    }
-  }
+  emulator_->InitializeMountDevices();
 
   // Set a debug handler.
   // This will respond to debugging requests so we can open the debug UI.

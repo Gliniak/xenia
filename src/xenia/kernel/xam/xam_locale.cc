@@ -432,6 +432,13 @@ dword_result_t XamGetLocaleEx_entry(dword_t max_country_id,
 }
 DECLARE_XAM_EXPORT1(XamGetLocaleEx, kLocale, kImplemented);
 
+dword_result_t XamUniSortCmpString_entry(lpu16string_t prev_str,
+                                         lpu16string_t next_str,
+                                         dword_t min_size, dword_t max_size) {
+  return X_E_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamUniSortCmpString, kLocale, kImplemented);
+
 }  // namespace xam
 }  // namespace kernel
 }  // namespace xe

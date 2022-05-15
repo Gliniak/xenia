@@ -22,268 +22,166 @@
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/crypto_utils.h"
 #include "xenia/kernel/util/shim_utils.h"
+#include "xenia/vfs/devices/host_path_device.h"
+#include "xenia/vfs/devices/stfs_container_device.h"
+#include "xenia/vfs/devices/stfs_container_entry.h"
+#include "xenia/vfs/devices/stfs_container_file.h"
+#include "xenia/kernel/xam/profile_manager.h"
+
+DECLARE_int32(license_mask);
+
+
 
 namespace xe {
 namespace kernel {
 namespace xam {
 
-constexpr uint32_t kDashboardID = 0xFFFE07D1;
-
 std::string X_XAMACCOUNTINFO::GetGamertagString() const {
   return xe::to_utf8(std::u16string(gamertag));
 }
 
-bool UserProfile::DecryptAccountFile(const uint8_t* data,
-                                     X_XAMACCOUNTINFO* output, bool devkit) {
-  const uint8_t* key = util::GetXeKey(0x19, devkit);
-  if (!key) {
-    return false;  // this shouldn't happen...
-  }
 
-  // Generate RC4 key from data hash
-  uint8_t rc4_key[0x14];
-  util::HmacSha(key, 0x10, data, 0x10, 0, 0, 0, 0, rc4_key, 0x14);
-
-  uint8_t dec_data[sizeof(X_XAMACCOUNTINFO) + 8];
-
-  // Decrypt data
-  util::RC4(rc4_key, 0x10, data + 0x10, sizeof(dec_data), dec_data,
-            sizeof(dec_data));
-
-  // Verify decrypted data against hash
-  uint8_t data_hash[0x14];
-  util::HmacSha(key, 0x10, dec_data, sizeof(dec_data), 0, 0, 0, 0, data_hash,
-                0x14);
-
-  if (std::memcmp(data, data_hash, 0x10) == 0) {
-    // Copy account data to output
-    std::memcpy(output, dec_data + 8, sizeof(X_XAMACCOUNTINFO));
-
-    // Swap gamertag endian
-    xe::copy_and_swap<char16_t>(output->gamertag, output->gamertag, 0x10);
-    return true;
-  }
-
-  return false;
-}
-
-void UserProfile::EncryptAccountFile(const X_XAMACCOUNTINFO* input,
-                                     uint8_t* output, bool devkit) {
-  const uint8_t* key = util::GetXeKey(0x19, devkit);
-  if (!key) {
-    return;  // this shouldn't happen...
-  }
-
-  X_XAMACCOUNTINFO* output_acct = (X_XAMACCOUNTINFO*)(output + 0x18);
-  std::memcpy(output_acct, input, sizeof(X_XAMACCOUNTINFO));
-
-  // Swap gamertag endian
-  xe::copy_and_swap<char16_t>(output_acct->gamertag, output_acct->gamertag,
-                             0x10);
-
-  // Set confounder, should be random but meh
-  std::memset(output + 0x10, 0xFD, 8);
-
-  // Encrypted data = xam account info + 8 byte confounder
-  uint32_t enc_data_size = sizeof(X_XAMACCOUNTINFO) + 8;
-
-  // Set data hash
-  uint8_t data_hash[0x14];
-  util::HmacSha(key, 0x10, output + 0x10, enc_data_size, 0, 0, 0, 0, data_hash,
-                0x14);
-
-  std::memcpy(output, data_hash, 0x10);
-
-  // Generate RC4 key from data hash
-  uint8_t rc4_key[0x14];
-  util::HmacSha(key, 0x10, data_hash, 0x10, 0, 0, 0, 0, rc4_key, 0x14);
-
-  // Encrypt data
-  util::RC4(rc4_key, 0x10, output + 0x10, enc_data_size, output + 0x10,
-            enc_data_size);
-}
-
-UserProfile::UserProfile(const std::filesystem::path profile_path)
-    : dash_gpd_(kDashboardID), profile_path_(profile_path) {
+UserProfile::UserProfile(const uint64_t xuid,
+                         const X_XAMACCOUNTINFO* account_info)
+    : dash_gpd_(kDashboardID) {
   // 58410A1F checks the user XUID against a mask of 0x00C0000000000000 (3<<54),
   // if non-zero, it prevents the user from playing the game.
   // "You do not have permissions to perform this operation."
-  account_.xuid_online = 0xBABEBABEBABEBABE;
-
-  std::u16string default_gamertag = xe::to_utf16("XeniaUser");
-  memcpy(account_.gamertag, default_gamertag.c_str(), 16);
-
-  // https://cs.rin.ru/forum/viewtopic.php?f=38&t=60668&hilit=gfwl+live&start=195
-  // https://github.com/arkem/py360/blob/master/py360/constants.py
-  // XPROFILE_GAMER_YAXIS_INVERSION
-  AddSetting(std::make_unique<Int32Setting>(0x10040002, 0));
-  // XPROFILE_OPTION_CONTROLLER_VIBRATION
-  AddSetting(std::make_unique<Int32Setting>(0x10040003, 3));
-  // XPROFILE_GAMERCARD_ZONE
-  AddSetting(std::make_unique<Int32Setting>(0x10040004, 0));
-  // XPROFILE_GAMERCARD_REGION
-  AddSetting(std::make_unique<Int32Setting>(0x10040005, 0));
-  // XPROFILE_GAMERCARD_CRED
-  AddSetting(std::make_unique<Int32Setting>(0x10040006, 0xFA));
-  // XPROFILE_GAMERCARD_REP
-  AddSetting(std::make_unique<FloatSetting>(0x5004000B, 0.0f));
-  // XPROFILE_OPTION_VOICE_MUTED
-  AddSetting(std::make_unique<Int32Setting>(0x1004000C, 0));
-  // XPROFILE_OPTION_VOICE_THRU_SPEAKERS
-  AddSetting(std::make_unique<Int32Setting>(0x1004000D, 0));
-  // XPROFILE_OPTION_VOICE_VOLUME
-  AddSetting(std::make_unique<Int32Setting>(0x1004000E, 0x64));
-  // XPROFILE_GAMERCARD_MOTTO
-  AddSetting(std::make_unique<UnicodeSetting>(0x402C0011, u""));
-  // XPROFILE_GAMERCARD_TITLES_PLAYED
-  AddSetting(std::make_unique<Int32Setting>(0x10040012, 1));
-  // XPROFILE_GAMERCARD_ACHIEVEMENTS_EARNED
-  AddSetting(std::make_unique<Int32Setting>(0x10040013, 0));
-  // XPROFILE_GAMER_DIFFICULTY
-  AddSetting(std::make_unique<Int32Setting>(0x10040015, 0));
-  // XPROFILE_GAMER_CONTROL_SENSITIVITY
-  AddSetting(std::make_unique<Int32Setting>(0x10040018, 0));
-  // Preferred color 1
-  AddSetting(std::make_unique<Int32Setting>(0x1004001D, 0xFFFF0000u));
-  // Preferred color 2
-  AddSetting(std::make_unique<Int32Setting>(0x1004001E, 0xFF00FF00u));
-  // XPROFILE_GAMER_ACTION_AUTO_AIM
-  AddSetting(std::make_unique<Int32Setting>(0x10040022, 1));
-  // XPROFILE_GAMER_ACTION_AUTO_CENTER
-  AddSetting(std::make_unique<Int32Setting>(0x10040023, 0));
-  // XPROFILE_GAMER_ACTION_MOVEMENT_CONTROL
-  AddSetting(std::make_unique<Int32Setting>(0x10040024, 0));
-  // XPROFILE_GAMER_RACE_TRANSMISSION
-  AddSetting(std::make_unique<Int32Setting>(0x10040026, 0));
-  // XPROFILE_GAMER_RACE_CAMERA_LOCATION
-  AddSetting(std::make_unique<Int32Setting>(0x10040027, 0));
-  // XPROFILE_GAMER_RACE_BRAKE_CONTROL
-  AddSetting(std::make_unique<Int32Setting>(0x10040028, 0));
-  // XPROFILE_GAMER_RACE_ACCELERATOR_CONTROL
-  AddSetting(std::make_unique<Int32Setting>(0x10040029, 0));
-  // XPROFILE_GAMERCARD_TITLE_CRED_EARNED
-  AddSetting(std::make_unique<Int32Setting>(0x10040038, 0));
-  // XPROFILE_GAMERCARD_TITLE_ACHIEVEMENTS_EARNED
-  AddSetting(std::make_unique<Int32Setting>(0x10040039, 0));
-
-  // If we set this, games will try to get it.
-  // XPROFILE_GAMERCARD_PICTURE_KEY
-  AddSetting(
-      std::make_unique<UnicodeSetting>(0x4064000F, u"gamercard_picture_key"));
-
-  // XPROFILE_TITLE_SPECIFIC1
-  AddSetting(std::make_unique<BinarySetting>(0x63E83FFF));
-  // XPROFILE_TITLE_SPECIFIC2
-  AddSetting(std::make_unique<BinarySetting>(0x63E83FFE));
-  // XPROFILE_TITLE_SPECIFIC3
-  AddSetting(std::make_unique<BinarySetting>(0x63E83FFD));
-  // Try loading profile GPD files...
-  LoadProfile();
+  offline_xuid = xuid;
+  memcpy(&account_, account_info, sizeof(X_XAMACCOUNTINFO));
 }
 
-void UserProfile::LoadAccount() {
-  const std::filesystem::path profile_path = profile_path_ / "Account";
-  auto mmap_ = MappedMemory::Open(profile_path,
-                         MappedMemory::Mode::kRead);
-  if (mmap_) {
-    XELOGI("Loading Account file from path {}", profile_path.u8string());
+UserProfile::UserProfile(
+    const uint64_t xuid, X_XAMACCOUNTINFO* account_info,
+    xam::xdbf::GpdFile dash_gpd,
+    std::unordered_map<uint32_t, xdbf::GpdFile> titles_gpd) {
 
-    X_XAMACCOUNTINFO tmp_acct;
-    bool success = DecryptAccountFile(mmap_->data(), &tmp_acct);
-    if (!success) {
-      success = DecryptAccountFile(mmap_->data(), &tmp_acct, true);
-    }
+  offline_xuid = xuid;
+  memcpy(&account_, account_info, sizeof(X_XAMACCOUNTINFO));
+  dash_gpd_ = dash_gpd;
+  title_gpds_ = titles_gpd;
 
-    if (!success) {
-      XELOGW("Failed to decrypt Account file data");
-    } else {
-      std::memcpy(&account_, &tmp_acct, sizeof(X_XAMACCOUNTINFO));
-      XELOGI("Loaded Account \"{}\" successfully!", name());
-    }
-
-    mmap_->Close();
-  }
+  LoadDefaultSettings();
+  // Make sure the dash GPD is up-to-date
+  //UpdateGpd(kDashboardID, dash_gpd_);
 }
 
-void UserProfile::LoadDashboardGpd() {
-  const std::filesystem::path dash_gpd_path = profile_path_ / "FFFE07D1.gpd";
+void UserProfile::LoadDefaultSettings() {
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMER_YAXIS_INVERSION, 0u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_OPTION_CONTROLLER_VIBRATION, 3u));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_ZONE, 0u));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_REGION, 0u));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_CRED, 0u));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_HAS_VISION, 0u));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_REP, 0.0f));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_OPTION_VOICE_MUTED, 0u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_OPTION_VOICE_THRU_SPEAKERS, 0u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_OPTION_VOICE_VOLUME, 0x64u));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_PICTURE_KEY,
+                                     xe::to_utf16("gamercard_picture_key")));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMERCARD_PERSONAL_PICTURE,
+                    xe::to_utf16("gamercard_personal_picture")));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_MOTTO,
+                                     xe::to_utf16("gamercard_motto")));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMERCARD_TITLES_PLAYED, 1u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMERCARD_ACHIEVEMENTS_EARNED, 0u));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMER_DIFFICULTY, 0u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMER_CONTROL_SENSITIVITY, 0u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMER_PREFERRED_COLOR_FIRST, 0xFFFF0000u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMER_PREFERRED_COLOR_SECOND, 0xFF00FF00u));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMER_ACTION_AUTO_AIM, 1u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMER_ACTION_AUTO_CENTER, 0u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMER_ACTION_MOVEMENT_CONTROL, 0u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMER_RACE_TRANSMISSION, 0u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMER_RACE_CAMERA_LOCATION, 0u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMER_RACE_BRAKE_CONTROL, 0u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMER_RACE_ACCELERATOR_CONTROL, 0u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMERCARD_TITLE_CRED_EARNED, 0u));
+  AddSettingIfNotExist(
+      xdbf::Setting(xdbf::XPROFILE_GAMERCARD_TITLE_ACHIEVEMENTS_EARNED, 0u));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_USER_NAME,
+                                     xe::to_utf16("XeniaUserName")));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_USER_LOCATION,
+                                     xe::to_utf16("XeniaUserLocation")));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_USER_URL,
+                                     xe::to_utf16("XeniaUserUrl")));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_USER_BIO,
+                                     xe::to_utf16("XeniaUserBio")));
 
-  auto mmap_ = MappedMemory::Open(dash_gpd_path, MappedMemory::Mode::kRead);
-  if (!mmap_) {
-    XELOGW(
-        "Failed to open dash GPD (FFFE07D1.gpd) for reading, using blank one");
-    return;
-  }
-
-  dash_gpd_.Read(mmap_->data(), mmap_->size());
-  mmap_->Close();
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_TITLE_SPECIFIC1, {}));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_TITLE_SPECIFIC2, {}));
+  AddSettingIfNotExist(xdbf::Setting(xdbf::XPROFILE_TITLE_SPECIFIC3, {}));
 }
 
-void UserProfile::LoadTitlesGpd() {
-  std::vector<xam::xdbf::TitlePlayed> titles;
-  dash_gpd_.GetTitles(&titles);
-
-  for (auto title : titles) {
-    const std::filesystem::path file_path =
-        profile_path_ / fmt::format("{:08X}.gpd", title.title_id);
-
-    auto mmap_ = MappedMemory::Open(file_path, MappedMemory::Mode::kRead);
-    if (!mmap_) {
-      XELOGE("Failed to open GPD for title {:08X} - {}", title.title_id,
-             xe::to_utf8(title.title_name));
-      continue;
-    }
-
-    xam::xdbf::GpdFile title_gpd(title.title_id);
-    bool result = title_gpd.Read(mmap_->data(), mmap_->size());
-    mmap_->Close();
-    if (!result) {
-      XELOGE("Failed to read GPD for title {:08X} {}!", title.title_id,
-             xe::to_utf8(title.title_name));
-      continue;
-    }
-
-    title_gpds_[title.title_id] = title_gpd;
-  }
-  XELOGI("Loaded {} profile GPDs", title_gpds_.size() + 1);
-}
-
-void UserProfile::LoadProfile() {
-  LoadAccount();
-  LoadDashboardGpd();
-  LoadTitlesGpd();
-}
 
 xam::xdbf::GpdFile* UserProfile::SetTitleSpaData(
     const xam::xdbf::SpaFile& spa_data) {
-  uint32_t spa_title = spa_data.GetTitleId();
+  xdbf::X_XDBF_XTHD_DATA title_data;
+  spa_data.GetTitleData(&title_data);
+
+  curr_title_id_ = title_data.title_id;
+  curr_gpd_ = nullptr;
 
   std::vector<xam::xdbf::Achievement> spa_achievements;
   // TODO: let user choose locale?
   spa_data.GetAchievements(spa_data.GetDefaultLocale(), &spa_achievements);
 
-  xam::xdbf::TitlePlayed title_info;
+  bool title_included =
+      title_data.title_type == xdbf::X_XDBF_XTHD_DATA::TitleType::kFull ||
+      title_data.title_type == xdbf::X_XDBF_XTHD_DATA::TitleType::kDownload;
 
-  auto gpd = title_gpds_.find(spa_title);
+  if (title_data.flags &
+      (uint32_t)xdbf::X_XDBF_XTHD_DATA::Flags::kAlwaysIncludeInProfile) {
+    title_included = true;
+  }
+
+  if (title_data.flags &
+      (uint32_t)xdbf::X_XDBF_XTHD_DATA::Flags::kNeverIncludeInProfile) {
+    title_included = false;
+  }
+
+  // If arcade game, only include if license_mask is set
+  if ((title_data.title_id >> 16) == 0x5841) {
+    title_included = cvars::license_mask != 0;
+  }
+
+  xdbf::TitlePlayed title_info;
+  auto gpd = title_gpds_.find(curr_title_id_);
 
   if (gpd != title_gpds_.end()) {
     auto& title_gpd = (*gpd).second;
 
-    XELOGI("Loaded existing GPD for title {:08X}", spa_title);
+    XELOGI("Loaded existing GPD for title {:08X}", curr_title_id_);
 
     bool always_update_title = false;
-    if (!dash_gpd_.GetTitle(spa_title, &title_info)) {
+    if (!dash_gpd_.GetTitle(curr_title_id_, &title_info)) {
       assert_always();
       XELOGE(
           "GPD exists but is missing XbdfTitlePlayed entry? (this shouldn't be "
           "happening!)");
       // Try to work around it...
       title_info.title_name = xe::to_utf16(spa_data.GetTitleName());
-      title_info.title_id = spa_title;
-      title_info.achievements_possible = 0;
-      title_info.achievements_earned = 0;
-      title_info.gamerscore_total = 0;
-      title_info.gamerscore_earned = 0;
+      title_info.title_id = curr_title_id_;
+      title_info.achievement_stats.achievements_count = 0;
+      title_info.achievement_stats.achievements_earned = 0;
+      title_info.achievement_stats.gamerscore_total = 0;
+      title_info.achievement_stats.gamerscore_earned = 0;
       always_update_title = true;
     }
     title_info.last_played = Clock::QueryHostSystemTime();
@@ -298,8 +196,8 @@ xam::xdbf::GpdFile* UserProfile::SetTitleSpaData(
       }
 
       // Achievement doesn't exist in current title info, lets add it
-      title_info.achievements_possible++;
-      title_info.gamerscore_total += ach.gamerscore;
+      title_info.achievement_stats.achievements_count++;
+      title_info.achievement_stats.gamerscore_total += ach.gamerscore;
 
       // If it doesn't exist in GPD, add it to that too
       if (!ach_exists) {
@@ -318,71 +216,61 @@ xam::xdbf::GpdFile* UserProfile::SetTitleSpaData(
 
     // Only write game GPD if achievements were updated
     if (ach_updated) {
-      UpdateGpd(spa_title, title_gpd);
+      UpdateGpd(curr_title_id_, title_gpd);
     }
     UpdateGpd(kDashboardID, dash_gpd_);
   } else {
     // GPD not found... have to create it!
-    XELOGD("Creating new GPD for title {:08X}", spa_title);
+    XELOGD("Creating new GPD for title {:08X}", curr_title_id_);
 
     title_info.title_name = xe::to_utf16(spa_data.GetTitleName());
-    title_info.title_id = spa_title;
+    title_info.title_id = curr_title_id_;
     title_info.last_played = Clock::QueryHostSystemTime();
 
     // Copy cheevos from SPA -> GPD
-    xdbf::GpdFile title_gpd(spa_title);
-    for (auto ach : spa_achievements) {
-      title_gpd.UpdateAchievement(ach);
-
-      title_info.achievements_possible++;
-      title_info.gamerscore_total += ach.gamerscore;
+    auto new_gpd = xdbf::GpdFile(title_data.title_id);
+    auto title_gpd = &new_gpd;
+    if (title_data.title_id == kDashboardID) {
+      // we're loading dash - may as well update dash gpd
+      title_gpd = &dash_gpd_;
     }
 
-    // Try copying achievement images if we can...
     for (auto ach : spa_achievements) {
-      auto* image_entry = spa_data.GetEntry(
-          static_cast<uint16_t>(xdbf::SpaSection::kImage),
-          ach.image_id);
-      if (image_entry) {
-        title_gpd.UpdateEntry(*image_entry);
-      }
+      title_gpd->UpdateAchievement(ach);
+      title_info.achievement_stats.achievements_count++;
+      title_info.achievement_stats.gamerscore_total += ach.gamerscore;
     }
 
     // Try adding title image & name
-    auto* title_image = spa_data.GetEntry(
-        static_cast<uint16_t>(xdbf::SpaSection::kImage),
+    auto* title_image = spa_data.GetEntry(static_cast<xdbf::XdbfSection>(xdbf::SpaSection::kImage),
         static_cast<uint64_t>(xdbf::SpaID::Title));
     if (title_image) {
-      title_gpd.UpdateEntry(*title_image);
+      title_gpd->UpdateEntry(*title_image);
     }
 
     auto title_name = xe::to_utf16(spa_data.GetTitleName());
     if (title_name.length()) {
       xdbf::Entry title_name_ent;
-      title_name_ent.info.section =
-          static_cast<uint16_t>(xdbf::GpdSection::kString);
+      title_name_ent.info.section = xdbf::XdbfSection::kString;
       title_name_ent.info.id =
           static_cast<uint64_t>(xdbf::SpaID::Title);
       title_name_ent.data.resize((title_name.length() + 1) * 2);
       xe::copy_and_swap((char16_t*)title_name_ent.data.data(),
                         title_name.c_str(), title_name.length());
-      title_gpd.UpdateEntry(title_name_ent);
+      title_gpd->UpdateEntry(title_name_ent);
     }
 
-    title_gpds_[spa_title] = title_gpd;
-
     // Update dash GPD with title and write updated GPDs
-    dash_gpd_.UpdateTitle(title_info);
-
-    UpdateGpd(spa_title, title_gpd);
+    if (curr_title_id_ != kDashboardID) {
+      title_gpds_[curr_title_id_] = *title_gpd;
+      dash_gpd_.UpdateTitle(title_info);
+      UpdateGpd(curr_title_id_, title_gpds_[curr_title_id_]);
+    }
     UpdateGpd(kDashboardID, dash_gpd_);
   }
 
-  // TODO: check SPA for any achievements current GPD might be missing
-  // (maybe added in TUs etc?)
-
-  curr_gpd_ = &title_gpds_[spa_title];
-  curr_title_id_ = spa_title;
+  curr_gpd_ = curr_title_id_ != kDashboardID ? &title_gpds_[curr_title_id_]
+                                             : &dash_gpd_;
 
     std::vector<xdbf::Achievement> achievements;
   if (curr_gpd_->GetAchievements(&achievements)) {
@@ -397,15 +285,17 @@ xam::xdbf::GpdFile* UserProfile::SetTitleSpaData(
     }
 
     XELOGI("Unlocked achievements: {}/{}, gamerscore: {}/{}\r\n",
-           title_info.achievements_earned, title_info.achievements_possible,
-           title_info.gamerscore_earned, title_info.gamerscore_total);
+           title_info.achievement_stats.achievements_earned,
+           title_info.achievement_stats.achievements_count,
+           title_info.achievement_stats.gamerscore_earned,
+           title_info.achievement_stats.gamerscore_total);
   }
 
   return curr_gpd_;
 }
 
 xdbf::GpdFile* UserProfile::GetTitleGpd(const uint32_t title_id) {
-  if (title_id == -1) {
+  if (title_id == -1 || title_id == 0) {
     return curr_gpd_;
   }
 
@@ -456,157 +346,99 @@ bool UserProfile::UpdateAllGpds() {
   return true;
 }
 
+xdbf::kAchievementsStats UserProfile::RecalculateAchievementsStats(
+    const uint32_t title_id, xdbf::GpdFile& gpd_data) {
+
+  xdbf::kAchievementsStats stats;
+  // Update achievement total settings
+  if (title_id != kDashboardID) {
+    std::vector<xdbf::Achievement> gpd_achievements;
+    gpd_data.GetAchievements(&gpd_achievements);
+
+    for (auto ach : gpd_achievements) {
+      stats.achievements_count++;
+      stats.gamerscore_total += ach.gamerscore;
+      if (ach.IsUnlocked()) {
+        stats.achievements_earned++;
+        stats.gamerscore_earned += ach.gamerscore;
+      }
+    }
+
+    gpd_data.UpdateSetting(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_TITLE_ACHIEVEMENTS_EARNED,
+                      stats.achievements_count));
+    gpd_data.UpdateSetting(xdbf::Setting(
+        xdbf::XPROFILE_GAMERCARD_TITLE_CRED_EARNED, stats.gamerscore_earned));
+  } else {
+    // We're writing dash gpd, so recalculate total achievements
+    // earned/gamerscore
+    std::vector<xdbf::TitlePlayed> titles;
+    dash_gpd_.GetTitles(&titles);
+    for (auto title : titles) {
+      stats.achievements_earned += title.achievement_stats.achievements_earned;
+      stats.gamerscore_earned += title.achievement_stats.gamerscore_earned;
+    }
+
+    dash_gpd_.UpdateSetting(xdbf::Setting(
+        xdbf::XPROFILE_GAMERCARD_TITLES_PLAYED, (uint32_t)titles.size()));
+    dash_gpd_.UpdateSetting(xdbf::Setting(xdbf::XPROFILE_GAMERCARD_ACHIEVEMENTS_EARNED,
+                      stats.achievements_earned));
+    dash_gpd_.UpdateSetting(
+        xdbf::Setting(xdbf::XPROFILE_GAMERCARD_CRED, stats.gamerscore_earned));
+  }
+  return stats;
+}
+
 bool UserProfile::UpdateGpd(uint32_t title_id, xdbf::GpdFile& gpd_data) {
+  xdbf::kAchievementsStats recalculated_stats =
+      RecalculateAchievementsStats(title_id, gpd_data);
+
   size_t gpd_length = 0;
   if (!gpd_data.Write(nullptr, &gpd_length)) {
     XELOGE("Failed to get GPD size for %X!", title_id);
     return false;
   }
 
-  auto profile_dir = kernel_state()->emulator()->content_root() /
-                     std::filesystem::path("profile");
-  
-  if (!std::filesystem::exists(profile_dir)) {
-    std::filesystem::create_directories(profile_dir);
+  // Open profile and update shit!
+  const std::string guest_path = fmt::format("{:016X}", offline_xuid) + ":\\" +
+                                 fmt::format("{:08X}.gpd", title_id);
+
+  xe::vfs::File* output_file;
+  xe::vfs::FileAction action = {};
+  auto status = kernel_state()->file_system()->OpenFile(
+      nullptr, guest_path, xe::vfs::FileDisposition::kSuperscede,
+      xe::vfs::FileAccess::kGenericAll, false, true, &output_file, &action);
+
+  std::vector<uint8_t> gpd_file_data;
+  gpd_file_data.resize(gpd_length);
+  gpd_data.Write(gpd_file_data.data(), &gpd_length);
+
+  size_t written_bytes = 0;
+  output_file->WriteSync(gpd_file_data.data(), gpd_length, 0, &written_bytes);
+  output_file->Destroy(); // Close&Save!
+
+  // Check if we need to update dashboard data...
+  if (title_id != kDashboardID) {
+    xdbf::TitlePlayed title_info;
+    if (dash_gpd_.GetTitle(title_id, &title_info)) {
+      if (recalculated_stats.isStatsUpdateRequired(title_info.achievement_stats)) {
+        title_info.achievement_stats = recalculated_stats;
+      }
+      dash_gpd_.UpdateTitle(title_info);
+      UpdateGpd(kDashboardID, dash_gpd_);
+    }
   }
+  return true;
+}
 
-  auto filename = fmt::format("{:08X}.gpd", title_id);
-
-  filesystem::CreateEmptyFile(profile_dir / filename);
-  auto mmap_ = MappedMemory::Open(
-      profile_dir / filename, MappedMemory::Mode::kReadWrite, 0,
-                                  gpd_length);
-  if (!mmap_) {
-    XELOGE("Failed to open {:08X}.gpd for writing!", title_id);
+bool UserProfile::AddSettingIfNotExist(xdbf::Setting& setting) {
+  if (dash_gpd_.GetSetting(setting.id, nullptr)) {
     return false;
   }
-
-  bool ret_val = true;
-
-  if (!gpd_data.Write(mmap_->data(), &gpd_length)) {
-    XELOGE("Failed to write GPD data for {:08X}!", title_id);
-    ret_val = false;
-  } else {
-    // Check if we need to update dashboard data...
-    if (title_id != kDashboardID) {
-      xdbf::TitlePlayed title_info;
-      if (dash_gpd_.GetTitle(title_id, &title_info)) {
-        std::vector<xdbf::Achievement> gpd_achievements;
-        // TODO: let user choose locale?
-        gpd_data.GetAchievements(&gpd_achievements);
-        uint32_t num_ach_total = 0;
-        uint32_t num_ach_earned = 0;
-        uint32_t gamerscore_total = 0;
-        uint32_t gamerscore_earned = 0;
-        for (auto ach : gpd_achievements) {
-          num_ach_total++;
-          gamerscore_total += ach.gamerscore;
-          if (ach.IsUnlocked()) {
-            num_ach_earned++;
-            gamerscore_earned += ach.gamerscore;
-          }
-        }
-
-        if (num_ach_total != title_info.achievements_possible ||
-            num_ach_earned != title_info.achievements_earned ||
-            gamerscore_total != title_info.gamerscore_total ||
-            gamerscore_earned != title_info.gamerscore_earned) {
-          title_info.achievements_possible = num_ach_total;
-          title_info.achievements_earned = num_ach_earned;
-          title_info.gamerscore_total = gamerscore_total;
-          title_info.gamerscore_earned = gamerscore_earned;
-
-          dash_gpd_.UpdateTitle(title_info);
-          UpdateGpd(kDashboardID, dash_gpd_);
-        }
-      }
-    }
+  if (setting.value.type == xdbf::X_XUSER_DATA_TYPE::kBinary &&
+      !setting.extraData.size()) {
+    setting.extraData.resize(XPROFILEID_SIZE(setting.id));
   }
-
-  mmap_->Close(gpd_length);
-  return ret_val;
-}
-
-void UserProfile::AddSetting(std::unique_ptr<Setting> setting) {
-  Setting* previous_setting = setting.get();
-  std::swap(settings_[setting->setting_id], previous_setting);
-
-  if (setting->is_set && setting->is_title_specific()) {
-    SaveSetting(setting.get());
-  }
-
-  if (previous_setting) {
-    // replace: swap out the old setting from the owning list
-    for (auto vec_it = setting_list_.begin(); vec_it != setting_list_.end();
-         ++vec_it) {
-      if (vec_it->get() == previous_setting) {
-        vec_it->swap(setting);
-        break;
-      }
-    }
-  } else {
-    // new setting: add to the owning list
-    setting_list_.push_back(std::move(setting));
-  }
-}
-
-UserProfile::Setting* UserProfile::GetSetting(uint32_t setting_id) {
-  const auto& it = settings_.find(setting_id);
-  if (it == settings_.end()) {
-    return nullptr;
-  }
-  UserProfile::Setting* setting = it->second;
-  if (setting->is_title_specific()) {
-    // If what we have loaded in memory isn't for the title that is running
-    // right now, then load it from disk.
-    if (kernel_state()->title_id() != setting->loaded_title_id) {
-      LoadSetting(setting);
-    }
-  }
-  return setting;
-}
-
-void UserProfile::LoadSetting(UserProfile::Setting* setting) {
-  if (setting->is_title_specific()) {
-    auto content_dir =
-        kernel_state()->content_manager()->ResolveGameUserContentPath();
-    auto setting_id = fmt::format("{:08X}", setting->setting_id);
-    auto file_path = content_dir / setting_id;
-    auto file = xe::filesystem::OpenFile(file_path, "rb");
-    if (file) {
-      fseek(file, 0, SEEK_END);
-      uint32_t input_file_size = static_cast<uint32_t>(ftell(file));
-      fseek(file, 0, SEEK_SET);
-
-      std::vector<uint8_t> serialized_data(input_file_size);
-      fread(serialized_data.data(), 1, serialized_data.size(), file);
-      fclose(file);
-      setting->Deserialize(serialized_data);
-      setting->loaded_title_id = kernel_state()->title_id();
-    }
-  } else {
-    // Unsupported for now.  Other settings aren't per-game and need to be
-    // stored some other way.
-    XELOGW("Attempting to load unsupported profile setting from disk");
-  }
-}
-
-void UserProfile::SaveSetting(UserProfile::Setting* setting) {
-  if (setting->is_title_specific()) {
-    auto serialized_setting = setting->Serialize();
-    auto content_dir =
-        kernel_state()->content_manager()->ResolveGameUserContentPath();
-    std::filesystem::create_directories(content_dir);
-    auto setting_id = fmt::format("{:08X}", setting->setting_id);
-    auto file_path = content_dir / setting_id;
-    auto file = xe::filesystem::OpenFile(file_path, "wb");
-    fwrite(serialized_setting.data(), 1, serialized_setting.size(), file);
-    fclose(file);
-  } else {
-    // Unsupported for now.  Other settings aren't per-game and need to be
-    // stored some other way.
-    XELOGW("Attempting to save unsupported profile setting to disk");
-  }
+  return dash_gpd_.UpdateSetting(setting);
 }
 
 }  // namespace xam

@@ -19,6 +19,7 @@
 #include "xenia/base/math.h"
 #include "xenia/base/string_buffer.h"
 #include "xenia/kernel/util/shim_utils.h"
+#include "xenia/kernel/xam/user_profile.h"
 #include "xenia/vfs/devices/stfs_container_entry.h"
 
 #if XE_PLATFORM_WIN32
@@ -111,6 +112,11 @@ StfsContainerDevice::~StfsContainerDevice() {
   // itself, so STFSFlush or any other things performed by the file during
   // destruction won't have a valid device to use
   // Not sure if there's any better way to handle those cases...
+  if (!root_entry_) {
+    // Empty STFS package? 99% sure, but let's handle it just in case
+    return;
+  }
+
   std::vector<StfsContainerEntry*> all_entries;
   FlattenChildEntries(reinterpret_cast<StfsContainerEntry*>(root_entry_.get()),
                       &all_entries);
@@ -706,7 +712,11 @@ bool StfsContainerDevice::STFSFlush() {
 
   kernel::xboxkrnl::XeKeysGetConsoleID_entry(header_.metadata.console_id, nullptr);
 
-  header_.metadata.profile_id = kernel::kernel_state()->user_profile()->xuid();
+  const auto& user_profile =
+      kernel::kernel_state()->profile_manager()->GetCurrentlyLoggedProfile();
+  if (user_profile) {
+    header_.metadata.profile_id = user_profile->xuid();
+  }
 
   // Set metadata device_id via ugly hex string -> bytes code...
   if (!cvars::device_id.empty()) {
@@ -719,23 +729,26 @@ bool StfsContainerDevice::STFSFlush() {
     }
   }
 
-  // Copy in title thumbnail
-  auto title_icon = kernel::kernel_state()->title_icon();
-  if (title_icon->info.size && !title_icon->data.empty()) {
-    // Only copy in if it's 0x3D00 or less
-    // (we could use std::min here, but there's no use in only copying part of
-    // the icon)
-    if (title_icon->info.size <= XContentMetadata::kThumbLengthV2) {
-      std::copy_n(title_icon->data.data(), title_icon->info.size,
-                  header_.metadata.title_thumbnail);
-      header_.metadata.title_thumbnail_size =
-          static_cast<uint32_t>(title_icon->info.size);
+  // Copy title thumbnail only if title_id matches with package title_id
+  if (kernel::kernel_state()->title_id() ==
+          header_.metadata.execution_info.title_id &&
+      kernel::kernel_state()->title_id() != kernel::xam::kDashboardID) {
+    auto title_icon = kernel::kernel_state()->title_icon();
 
-      // TODO(Gliniak): Certain games doesn't write thumbnail icon, but console
-      // probably duplicates it
-      std::copy_n(title_icon->data.data(), title_icon->info.size,
-                  header_.metadata.thumbnail);
-      header_.metadata.thumbnail_size = static_cast<uint32_t>(title_icon->info.size);
+    if (title_icon) {
+      if (title_icon->info.size <= XContentMetadata::kThumbLengthV2) {
+        std::copy_n(title_icon->data.data(), title_icon->info.size,
+                    header_.metadata.title_thumbnail);
+        header_.metadata.title_thumbnail_size =
+            static_cast<uint32_t>(title_icon->info.size);
+
+        // TODO(Gliniak): Certain games doesn't write thumbnail icon, but
+        // console probably duplicates it
+        std::copy_n(title_icon->data.data(), title_icon->info.size,
+                    header_.metadata.thumbnail);
+        header_.metadata.thumbnail_size =
+            static_cast<uint32_t>(title_icon->info.size);
+      }
     }
   }
 

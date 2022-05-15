@@ -24,10 +24,6 @@ namespace xe {
 namespace kernel {
 namespace xam {
 
-static const char* kThumbnailFileName = "__thumbnail.png";
-
-static const char* kGameUserContentDirName = "profile";
-
 static int content_device_id_ = 0;
 
 ContentPackage::ContentPackage(KernelState* kernel_state,
@@ -70,28 +66,46 @@ ContentManager::ContentManager(KernelState* kernel_state,
 ContentManager::~ContentManager() = default;
 
 std::filesystem::path ContentManager::ResolvePackageRoot(
-    XContentType content_type, uint32_t title_id) {
+    XContentType content_type, uint32_t title_id, uint64_t xuid) {
+  auto xuid_path = fmt::format("{:016X}", xuid);
+
   if (title_id == -1 || !title_id) {
     title_id = kernel_state_->title_id();
   }
+
+  // TODO(Gliniak): Find more robust way of handling paths for every case
+  // Some elements are stored within profile other in commons and dashboard can
+  // access all of them
+  if (title_id == kDashboardID) {
+    if (!xuid) {
+      return root_path_;
+    }
+  } else if (content_type != XContentType::kInstaller) {
+    xuid_path = fmt::format(
+        "{:016X}",
+        kernel_state_->profile_manager()->GetCurrentlyLoggedProfile()->xuid());
+  }
+
   auto title_id_str = fmt::format("{:08X}", title_id);
   auto content_type_str = fmt::format("{:08X}", uint32_t(content_type));
 
   // Package root path:
   // content_root/title_id/type_id/
-  return root_path_ / title_id_str / content_type_str;
+  return root_path_ / xuid_path / title_id_str / content_type_str;
 }
 
 std::filesystem::path ContentManager::ResolvePackagePath(
     const XCONTENT_AGGREGATE_DATA& data) {
   // Content path:
   // content_root/title_id/content_type/data_file_name
-  auto package_root = ResolvePackageRoot(data.content_type, data.title_id);
+  auto package_root =
+      ResolvePackageRoot(data.content_type, data.title_id, data.profile_xuid);
   return package_root / xe::to_path(data.file_name());
 }
 
 std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
-    uint32_t device_id, XContentType content_type, uint32_t title_id) {
+    uint32_t device_id, XContentType content_type, uint32_t title_id,
+    uint64_t xuid) {
   if (title_id == kCurrentlyRunningTitleId) {
     title_id = kernel_state_->title_id();
   }
@@ -99,10 +113,23 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
   std::vector<XCONTENT_AGGREGATE_DATA> result;
 
   // Search path:
-  // content_root/title_id/content_type/*
-  auto package_root = ResolvePackageRoot(content_type, title_id);
-  auto file_infos = xe::filesystem::ListFiles(package_root);
-  for (const auto& file_info : file_infos) {
+  // content_root/xuid/title_id/content_type/*
+  auto package_root = ResolvePackageRoot(content_type, title_id, xuid);
+  auto file_list = xe::filesystem::ListFiles(package_root);
+
+  // TODO: Check if this contidion is correct
+  if ((!title_id || title_id == -1 || title_id == kDashboardID) && !xuid) {
+    auto file_list_recursive = xe::filesystem::ListFilesWithPattern(
+        package_root, std::regex(fmt::format("{:08X}", content_type)), true);
+
+    file_list.clear();
+    for (const auto& dir_info : file_list_recursive) {
+      auto entries = xe::filesystem::ListFiles(dir_info.path / dir_info.name);
+      file_list.insert(file_list.end(), entries.cbegin(), entries.cend());
+    }
+  }
+
+  for (const auto& file_info : file_list) {
     if (file_info.type != xe::filesystem::FileInfo::Type::kFile) {
       // Files only.
       continue;
@@ -138,13 +165,14 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
     content_data.device_id = device_id;
     content_data.content_type = device->header().metadata.content_type;
 
-    // Get display name in the titles default language, as some JP games seem to
-    // expect the japanese display_name value
+    // Get display name in the titles default language, as some JP games seem
+    // to expect the japanese display_name value
     content_data.set_display_name(device->header().metadata.display_name(
         kernel_state_->title_language()));
 
     content_data.set_file_name(path_to_utf8(file_info.name));
-    content_data.title_id = title_id;
+    content_data.title_id = device->header().metadata.execution_info.title_id;
+    content_data.profile_xuid = device->header().metadata.profile_id;
 
     result.emplace_back(std::move(content_data));
   }
@@ -189,7 +217,11 @@ X_RESULT ContentManager::CreateContent(const std::string_view root_name,
   }
 
   auto parent = package_path.parent_path();
-  std::filesystem::create_directories(parent);
+
+  if (!std::filesystem::exists(parent)) {
+    std::filesystem::create_directories(parent);
+  }
+
   if (!std::filesystem::exists(parent)) {
     // Failed to create parent path?
     return X_ERROR_ACCESS_DENIED;
@@ -232,9 +264,9 @@ X_RESULT ContentManager::CreateContent(const std::string_view root_name,
 
   // TODO: use users chosen language instead?
   header->metadata.set_display_name(XLanguage::kEnglish, data.display_name());
-
-  // TODO: set profile ID to the offline XUID (0xE0....)
-  header->metadata.profile_id = kernel_state_->user_profile()->xuid();
+  // TODO: Are we sure that profile in slot 0 is logged on?
+  header->metadata.profile_id =
+      kernel_state_->profile_manager()->GetCurrentlyLoggedProfile()->xuid();
 
   open_packages_.insert({string_key::create(root_name), package.release()});
 
@@ -387,15 +419,6 @@ X_RESULT ContentManager::DeleteContent(const XCONTENT_AGGREGATE_DATA& data) {
   } else {
     return X_ERROR_FILE_NOT_FOUND;
   }
-}
-
-std::filesystem::path ContentManager::ResolveGameUserContentPath() {
-  auto title_id_str = fmt::format("{:8X}", kernel_state_->title_id());
-  auto user_name = xe::to_path(kernel_state_->user_profile()->name());
-
-  // Per-game per-profile data location:
-  // content_root/title_id/profile/user_name
-  return root_path_ / title_id_str / kGameUserContentDirName / user_name;
 }
 
 bool ContentManager::IsContentOpen(const XCONTENT_AGGREGATE_DATA& data) const {

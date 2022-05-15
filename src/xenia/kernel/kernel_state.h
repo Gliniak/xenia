@@ -26,6 +26,7 @@
 #include "xenia/kernel/xam/xdbf/xdbf.h"
 #include "xenia/kernel/xam/app_manager.h"
 #include "xenia/kernel/xam/content_manager.h"
+#include "xenia/kernel/xam/profile_manager.h"
 #include "xenia/kernel/xam/user_profile.h"
 #include "xenia/memory.h"
 #include "xenia/vfs/virtual_file_system.h"
@@ -106,6 +107,10 @@ class KernelState {
   XLanguage title_language() const {
     return title_spa_data_.GetDefaultLocale();
   }
+  xam::xdbf::Entry* achievement_icon(uint64_t achievement_image_id) const {
+    return title_spa_data_.GetEntry(xam::xdbf::XdbfSection::kImage,
+                                    achievement_image_id);
+  }
 
   xam::xdbf::Entry* title_icon() const { return title_spa_data_.GetIcon(); }
 
@@ -113,7 +118,7 @@ class KernelState {
   xam::ContentManager* content_manager() const {
     return content_manager_.get();
   }
-  xam::UserProfile* user_profile() const { return user_profile_.get(); }
+  xam::ProfileManager* profile_manager() const { return profile_manager_.get(); }
 
   // Access must be guarded by the global critical region.
   util::ObjectTable* object_table() { return &object_table_; }
@@ -206,6 +211,7 @@ class KernelState {
   bool Restore(ByteStream* stream);
 
  private:
+  void Init();
   void LoadKernelModule(object_ref<KernelModule> kernel_module);
 
   Emulator* emulator_;
@@ -214,8 +220,8 @@ class KernelState {
   vfs::VirtualFileSystem* file_system_;
 
   std::unique_ptr<xam::AppManager> app_manager_;
+  std::unique_ptr<xam::ProfileManager> profile_manager_;
   std::unique_ptr<xam::ContentManager> content_manager_;
-  std::unique_ptr<xam::UserProfile> user_profile_;
 
   xe::global_critical_region global_critical_region_;
 

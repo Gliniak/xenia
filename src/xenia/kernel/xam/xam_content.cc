@@ -12,6 +12,7 @@
 #include "xenia/base/string_util.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
+#include "xenia/kernel/xam/profile_manager.h"
 #include "xenia/kernel/xam/xam_content_device.h"
 #include "xenia/kernel/xam/xam_private.h"
 #include "xenia/kernel/xenumerator.h"
@@ -318,15 +319,19 @@ dword_result_t XamContentGetCreator_entry(dword_t user_index,
   XCONTENT_AGGREGATE_DATA content_data = {
       *content_data_ptr.as<XCONTENT_DATA*>()};
 
-  auto run = [content_data, is_creator_ptr, creator_xuid_ptr, overlapped_ptr](
-                 uint32_t& extended_error, uint32_t& length) -> X_RESULT {
+  auto run = [content_data, user_index, is_creator_ptr, creator_xuid_ptr,
+              overlapped_ptr](uint32_t& extended_error,
+                              uint32_t& length) -> X_RESULT {
     X_RESULT result = X_ERROR_SUCCESS;
 
     if (content_data.content_type == XContentType::kSavedGame) {
       // User always creates saves.
       *is_creator_ptr = 1;
       if (creator_xuid_ptr) {
-        *creator_xuid_ptr = kernel_state()->user_profile()->xuid();
+        *creator_xuid_ptr = kernel_state()
+                                ->profile_manager()
+                                ->GetProfileWithUserIndex(user_index)
+                                ->xuid();
       }
     } else {
       *is_creator_ptr = 0;
