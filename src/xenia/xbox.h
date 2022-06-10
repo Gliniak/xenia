@@ -253,6 +253,19 @@ static_assert_size(X_UNICODE_STRING, 8);
 // https://pastebin.com/SMypYikG
 typedef uint32_t XNotificationID;
 
+enum XNotification : XNotificationID {
+  // Boolean data value: toggle on/off
+  XN_SYS_UI = 0x09,
+  // Bitmask of signed profiles
+  XN_SYS_SIGNINCHANGED = 0x0A,
+  XN_SYS_INPUTDEVICESCHANGED = 0x12,
+  XN_SYS_INPUTDEVICECONFIGCHANGED = 0x13,
+
+  XN_XMP_STATECHANGED = 0x0A000001,
+  XN_XMP_PLAYBACKBEHAVIORCHANGED = 0x0A000002,
+  XN_XMP_PLAYBACKCONTROLLERCHANGED = 0x0A000003,
+};
+
 // https://github.com/CodeAsm/ffplay360/blob/master/Common/XTLOnPC.h
 struct X_VIDEO_MODE {
   be<uint32_t> display_width;

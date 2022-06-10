@@ -525,9 +525,10 @@ dword_result_t XamShowSigninUI_entry(dword_t unk, dword_t unk_mask) {
   // Mask values vary. Probably matching user types? Local/remote?
   // Games seem to sit and loop until we trigger this notification:
   // XN_SYS_SIGNINCHANGED
-  kernel_state()->BroadcastNotification(0xA, kernel_state()->GetConnectedUsers());
+  kernel_state()->BroadcastNotification(XN_SYS_SIGNINCHANGED,
+                                        kernel_state()->GetConnectedUsers());
   // XN_SYS_UI (off)
-  kernel_state()->BroadcastNotification(0x00000009, 0);
+  kernel_state()->BroadcastNotification(XN_SYS_UI, 0);
   return X_ERROR_SUCCESS;
 }
 DECLARE_XAM_EXPORT1(XamShowSigninUI, kUserProfiles, kStub);

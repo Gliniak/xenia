@@ -628,17 +628,17 @@ void KernelState::RegisterNotifyListener(XNotifyListener* listener) {
   if (!has_notified_startup_ && listener->mask() & 0x00000001) {
     has_notified_startup_ = true;
     // XN_SYS_UI (on, off)
-    listener->EnqueueNotification(0x00000009, 1);
-    listener->EnqueueNotification(0x00000009, 0);
+    listener->EnqueueNotification(XN_SYS_UI, 1);
+    listener->EnqueueNotification(XN_SYS_UI, 0);
     // XN_SYS_SIGNINCHANGED x2
-    listener->EnqueueNotification(0x0000000A, 1);
-    listener->EnqueueNotification(0x0000000A, 1);
+    listener->EnqueueNotification(XN_SYS_SIGNINCHANGED, 1);
+    listener->EnqueueNotification(XN_SYS_SIGNINCHANGED, 1);
     // XN_SYS_INPUTDEVICESCHANGED x2
-    listener->EnqueueNotification(0x00000012, 0);
-    listener->EnqueueNotification(0x00000012, 0);
+    listener->EnqueueNotification(XN_SYS_INPUTDEVICESCHANGED, 0);
+    listener->EnqueueNotification(XN_SYS_INPUTDEVICESCHANGED, 0);
     // XN_SYS_INPUTDEVICECONFIGCHANGED x2
-    listener->EnqueueNotification(0x00000013, 0);
-    listener->EnqueueNotification(0x00000013, 0);
+    listener->EnqueueNotification(XN_SYS_INPUTDEVICECONFIGCHANGED, 0);
+    listener->EnqueueNotification(XN_SYS_INPUTDEVICECONFIGCHANGED, 0);
   }
 }
 
@@ -896,12 +896,14 @@ void KernelState::UpdateUsedUserProfiles() {
 
     if (IsUserSignedIn(i) && !is_used) {
       user_profiles_.erase(i);
-      BroadcastNotification(0x12, 0);
+      // This notification SHOULDN'T be related to signed in profiles
+      // However for now it is good enough
+      BroadcastNotification(XN_SYS_INPUTDEVICESCHANGED, 0);
     }
 
     if (!IsUserSignedIn(i) && is_used) {
       user_profiles_.emplace(i, std::make_unique<xam::UserProfile>(i));
-      BroadcastNotification(0x12, 0);
+      BroadcastNotification(XN_SYS_INPUTDEVICESCHANGED, 0);
     }
   }
 }
