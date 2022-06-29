@@ -21,7 +21,7 @@ class NopInputDriver final : public InputDriver {
   explicit NopInputDriver(xe::ui::Window* window, size_t window_z_order);
   ~NopInputDriver() override;
 
-  X_STATUS Setup() override;
+  X_STATUS Setup(std::vector<std::unique_ptr<InputDriver>>& drivers) override;
 
   X_RESULT GetCapabilities(uint32_t user_index, uint32_t flags,
                            X_INPUT_CAPABILITIES* out_caps) override;

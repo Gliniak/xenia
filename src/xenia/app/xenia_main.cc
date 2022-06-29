@@ -281,12 +281,13 @@ std::vector<std::unique_ptr<hid::InputDriver>> EmulatorApp::CreateInputDrivers(
 #endif  // XE_PLATFORM_WIN32
     factory.Add("sdl", xe::hid::sdl::Create);
 #if XE_PLATFORM_WIN32
+    factory.Add("xinput", xe::hid::xinput::Create);
     // WinKey input driver should always be the last input driver added!
     factory.Add("winkey", xe::hid::winkey::Create);
 #endif  // XE_PLATFORM_WIN32
     for (auto& driver : factory.CreateAll(cvars::hid, window,
                                           EmulatorWindow::kZOrderHidInput)) {
-      if (XSUCCEEDED(driver->Setup())) {
+      if (XSUCCEEDED(driver->Setup(drivers))) {
         drivers.emplace_back(std::move(driver));
       }
     }

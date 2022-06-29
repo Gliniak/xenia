@@ -124,33 +124,33 @@ std::vector<std::unique_ptr<hid::InputDriver>> HidDemoApp::CreateInputDrivers(
     drivers.emplace_back(xe::hid::nop::Create(window, kZOrderHidInput));
   } else if (cvars::hid.compare("sdl") == 0) {
     auto driver = xe::hid::sdl::Create(window, kZOrderHidInput);
-    if (XSUCCEEDED(driver->Setup())) {
+    if (XSUCCEEDED(driver->Setup(drivers))) {
       drivers.emplace_back(std::move(driver));
     }
 #if XE_PLATFORM_WIN32
   } else if (cvars::hid.compare("winkey") == 0) {
     auto driver = xe::hid::winkey::Create(window, kZOrderHidInput);
-    if (XSUCCEEDED(driver->Setup())) {
+    if (XSUCCEEDED(driver->Setup(drivers))) {
       drivers.emplace_back(std::move(driver));
     }
   } else if (cvars::hid.compare("xinput") == 0) {
     auto driver = xe::hid::xinput::Create(window, kZOrderHidInput);
-    if (XSUCCEEDED(driver->Setup())) {
+    if (XSUCCEEDED(driver->Setup(drivers))) {
       drivers.emplace_back(std::move(driver));
     }
 #endif  // XE_PLATFORM_WIN32
   } else {
     auto sdl_driver = xe::hid::sdl::Create(window, kZOrderHidInput);
-    if (sdl_driver && XSUCCEEDED(sdl_driver->Setup())) {
+    if (sdl_driver && XSUCCEEDED(sdl_driver->Setup(drivers))) {
       drivers.emplace_back(std::move(sdl_driver));
     }
 #if XE_PLATFORM_WIN32
     auto xinput_driver = xe::hid::xinput::Create(window, kZOrderHidInput);
-    if (xinput_driver && XSUCCEEDED(xinput_driver->Setup())) {
+    if (xinput_driver && XSUCCEEDED(xinput_driver->Setup(drivers))) {
       drivers.emplace_back(std::move(xinput_driver));
     }
     auto winkey_driver = xe::hid::winkey::Create(window, kZOrderHidInput);
-    if (winkey_driver && XSUCCEEDED(winkey_driver->Setup())) {
+    if (winkey_driver && XSUCCEEDED(winkey_driver->Setup(drivers))) {
       drivers.emplace_back(std::move(winkey_driver));
     }
 #endif  // XE_PLATFORM_WIN32

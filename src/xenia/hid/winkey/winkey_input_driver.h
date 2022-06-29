@@ -25,7 +25,7 @@ class WinKeyInputDriver final : public InputDriver {
   explicit WinKeyInputDriver(xe::ui::Window* window, size_t window_z_order);
   ~WinKeyInputDriver() override;
 
-  X_STATUS Setup() override;
+  X_STATUS Setup(std::vector<std::unique_ptr<InputDriver>>& drivers) override;
 
   X_RESULT GetCapabilities(uint32_t user_index, uint32_t flags,
                            X_INPUT_CAPABILITIES* out_caps) override;
@@ -34,6 +34,7 @@ class WinKeyInputDriver final : public InputDriver {
   X_RESULT GetKeystroke(uint32_t user_index, uint32_t flags,
                         X_INPUT_KEYSTROKE* out_keystroke) override;
 
+  void user_index(uint32_t index) { user_index_ = index; }
  protected:
   struct KeyEvent {
     ui::VirtualKey virtual_key = ui::VirtualKey::kNone;
@@ -73,7 +74,11 @@ class WinKeyInputDriver final : public InputDriver {
   std::queue<KeyEvent> key_events_;
   std::vector<KeyBinding> key_bindings_;
 
+  // map of keys pressed for ToUnicode call - not guaranteed to be up-to-date
+  uint8_t key_map_[256];
+
   uint32_t packet_number_ = 1;
+  uint32_t user_index_ = 1;
 };
 
 }  // namespace winkey
