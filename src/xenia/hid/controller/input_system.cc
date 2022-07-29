@@ -7,11 +7,11 @@
  ******************************************************************************
  */
 
-#include "xenia/hid/input_system.h"
+#include "xenia/hid/controller/input_system.h"
 
 #include "xenia/base/profiling.h"
-#include "xenia/hid/hid_flags.h"
-#include "xenia/hid/input_driver.h"
+#include "xenia/hid/controller/hid_flags.h"
+#include "xenia/hid/controller/input_driver.h"
 
 namespace xe {
 namespace hid {

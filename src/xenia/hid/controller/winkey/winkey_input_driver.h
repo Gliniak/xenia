@@ -13,7 +13,7 @@
 #include <queue>
 
 #include "xenia/base/mutex.h"
-#include "xenia/hid/input_driver.h"
+#include "xenia/hid/controller/input_driver.h"
 #include "xenia/ui/virtual_key.h"
 
 namespace xe {

@@ -7,19 +7,19 @@
  ******************************************************************************
  */
 
-#ifndef XENIA_HID_NOP_NOP_INPUT_DRIVER_H_
-#define XENIA_HID_NOP_NOP_INPUT_DRIVER_H_
+#ifndef XENIA_HID_XINPUT_XINPUT_INPUT_DRIVER_H_
+#define XENIA_HID_XINPUT_XINPUT_INPUT_DRIVER_H_
 
-#include "xenia/hid/input_driver.h"
+#include "xenia/hid/controller/input_driver.h"
 
 namespace xe {
 namespace hid {
-namespace nop {
+namespace xinput {
 
-class NopInputDriver final : public InputDriver {
+class XInputInputDriver final : public InputDriver {
  public:
-  explicit NopInputDriver(xe::ui::Window* window, size_t window_z_order);
-  ~NopInputDriver() override;
+  explicit XInputInputDriver(xe::ui::Window* window, size_t window_z_order);
+  ~XInputInputDriver() override;
 
   X_STATUS Setup() override;
 
@@ -29,10 +29,18 @@ class NopInputDriver final : public InputDriver {
   X_RESULT SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration) override;
   X_RESULT GetKeystroke(uint32_t user_index, uint32_t flags,
                         X_INPUT_KEYSTROKE* out_keystroke) override;
+
+ private:
+  void* module_;
+  void* XInputGetCapabilities_;
+  void* XInputGetState_;
+  void* XInputGetKeystroke_;
+  void* XInputSetState_;
+  void* XInputEnable_;
 };
 
-}  // namespace nop
+}  // namespace xinput
 }  // namespace hid
 }  // namespace xe
 
-#endif  // XENIA_HID_NOP_NOP_INPUT_DRIVER_H_
+#endif  // XENIA_HID_XINPUT_XINPUT_INPUT_DRIVER_H_

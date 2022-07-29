@@ -12,7 +12,7 @@ project("xenia-kernel")
     "xenia-apu",
     "xenia-base",
     "xenia-cpu",
-    "xenia-hid",
+    "xenia-hid-controller",
     "xenia-vfs",
   })
   defines({

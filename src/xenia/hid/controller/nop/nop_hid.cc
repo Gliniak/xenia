@@ -7,7 +7,19 @@
  ******************************************************************************
  */
 
-#include "xenia/hid/hid_flags.h"
+#include "xenia/hid/controller/nop/nop_hid.h"
 
-DEFINE_bool(guide_button, false, "Forward guide button presses to guest.",
-            "HID");
+#include "xenia/hid/controller/nop/nop_input_driver.h"
+
+namespace xe {
+namespace hid {
+namespace nop {
+
+std::unique_ptr<InputDriver> Create(xe::ui::Window* window,
+                                    size_t window_z_order) {
+  return std::make_unique<NopInputDriver>(window, window_z_order);
+}
+
+}  // namespace nop
+}  // namespace hid
+}  // namespace xe

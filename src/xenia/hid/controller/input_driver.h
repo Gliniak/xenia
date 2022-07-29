@@ -13,7 +13,7 @@
 #include <cstddef>
 #include <functional>
 
-#include "xenia/hid/input.h"
+#include "xenia/hid/controller/input.h"
 #include "xenia/ui/window.h"
 #include "xenia/xbox.h"
 

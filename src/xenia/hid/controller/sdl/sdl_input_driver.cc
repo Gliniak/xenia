@@ -7,7 +7,7 @@
  ******************************************************************************
  */
 
-#include "xenia/hid/sdl/sdl_input_driver.h"
+#include "xenia/hid/controller/sdl/sdl_input_driver.h"
 
 #include <array>
 
@@ -19,7 +19,7 @@
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/helper/sdl/sdl_helper.h"
-#include "xenia/hid/hid_flags.h"
+#include "xenia/hid/controller/hid_flags.h"
 #include "xenia/ui/virtual_key.h"
 #include "xenia/ui/window.h"
 #include "xenia/ui/windowed_app_context.h"

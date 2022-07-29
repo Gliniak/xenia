@@ -1,14 +1,14 @@
-project_root = "../../../.."
+project_root = "../../../../.."
 include(project_root.."/tools/build")
 
 group("src")
-project("xenia-hid-xinput")
-  uuid("3d49e251-07a7-40ae-9bc6-aae984c85568")
+project("xenia-hid-controller-nop")
+  uuid("887b6f26-b0c1-43c1-a013-a37e7b9634fd")
   kind("StaticLib")
   language("C++")
   links({
     "xenia-base",
-    "xenia-hid",
+    "xenia-hid-controller",
   })
   defines({
   })

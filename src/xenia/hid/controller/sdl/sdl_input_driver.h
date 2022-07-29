@@ -16,7 +16,7 @@
 #include <optional>
 
 #include "SDL.h"
-#include "xenia/hid/input_driver.h"
+#include "xenia/hid/controller/input_driver.h"
 
 #define HID_SDL_USER_COUNT 4
 #define HID_SDL_THUMB_THRES 0x4E00

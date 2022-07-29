@@ -13,8 +13,8 @@
 #include <memory>
 #include <vector>
 
-#include "xenia/hid/input.h"
-#include "xenia/hid/input_driver.h"
+#include "xenia/hid/controller/input.h"
+#include "xenia/hid/controller/input_driver.h"
 #include "xenia/xbox.h"
 
 namespace xe {

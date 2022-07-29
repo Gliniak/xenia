@@ -2,27 +2,24 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2014 Ben Vanik. All rights reserved.                             *
+ * Copyright 2013 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
 
-#ifndef XENIA_HID_WINKEY_WINKEY_HID_H_
-#define XENIA_HID_WINKEY_WINKEY_HID_H_
+#include "xenia/hid/controller/xinput/xinput_hid.h"
 
-#include <memory>
-
-#include "xenia/hid/input_system.h"
+#include "xenia/hid/controller/xinput/xinput_input_driver.h"
 
 namespace xe {
 namespace hid {
-namespace winkey {
+namespace xinput {
 
 std::unique_ptr<InputDriver> Create(xe::ui::Window* window,
-                                    size_t window_z_order);
+                                    size_t window_z_order) {
+  return std::make_unique<XInputInputDriver>(window, window_z_order);
+}
 
-}  // namespace winkey
+}  // namespace xinput
 }  // namespace hid
 }  // namespace xe
-
-#endif  // XENIA_HID_WINKEY_WINKEY_HID_H_

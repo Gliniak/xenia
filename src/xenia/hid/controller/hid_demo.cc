@@ -23,8 +23,8 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
 #include "xenia/base/threading.h"
-#include "xenia/hid/hid_flags.h"
-#include "xenia/hid/input_system.h"
+#include "xenia/hid/controller/hid_flags.h"
+#include "xenia/hid/controller/input_system.h"
 #include "xenia/ui/imgui_dialog.h"
 #include "xenia/ui/imgui_drawer.h"
 #include "xenia/ui/immediate_drawer.h"
@@ -36,13 +36,13 @@
 #include "xenia/ui/windowed_app.h"
 
 // Available input drivers:
-#include "xenia/hid/nop/nop_hid.h"
+#include "xenia/hid/controller/nop/nop_hid.h"
 #if !XE_PLATFORM_ANDROID
-#include "xenia/hid/sdl/sdl_hid.h"
+#include "xenia/hid/controller/sdl/sdl_hid.h"
 #endif  // !XE_PLATFORM_ANDROID
 #if XE_PLATFORM_WIN32
-#include "xenia/hid/winkey/winkey_hid.h"
-#include "xenia/hid/xinput/xinput_hid.h"
+#include "xenia/hid/controller/winkey/winkey_hid.h"
+#include "xenia/hid/controller/xinput/xinput_hid.h"
 #endif  // XE_PLATFORM_WIN32
 
 DEFINE_string(hid, "any", "Input system. Use: [any, nop, sdl, winkey, xinput]",

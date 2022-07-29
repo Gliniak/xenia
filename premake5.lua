@@ -289,8 +289,8 @@ workspace("xenia")
   include("src/xenia/gpu")
   include("src/xenia/gpu/null")
   include("src/xenia/gpu/vulkan")
-  include("src/xenia/hid")
-  include("src/xenia/hid/nop")
+  include("src/xenia/hid/controller")
+  include("src/xenia/hid/controller/nop")
   include("src/xenia/kernel")
   include("src/xenia/ui")
   include("src/xenia/ui/vulkan")
@@ -299,13 +299,13 @@ workspace("xenia")
   if not os.istarget("android") then
     include("src/xenia/apu/sdl")
     include("src/xenia/helper/sdl")
-    include("src/xenia/hid/sdl")
+    include("src/xenia/hid/controller/sdl")
   end
 
   if os.istarget("windows") then
     include("src/xenia/apu/xaudio2")
     include("src/xenia/gpu/d3d12")
-    include("src/xenia/hid/winkey")
-    include("src/xenia/hid/xinput")
+    include("src/xenia/hid/controller/winkey")
+    include("src/xenia/hid/controller/xinput")
     include("src/xenia/ui/d3d12")
   end

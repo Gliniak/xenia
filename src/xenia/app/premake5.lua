@@ -14,8 +14,8 @@ project("xenia-app")
     "xenia-gpu",
     "xenia-gpu-null",
     "xenia-gpu-vulkan",
-    "xenia-hid",
-    "xenia-hid-nop",
+    "xenia-hid-controller",
+    "xenia-hid-controller-nop",
     "xenia-kernel",
     "xenia-ui",
     "xenia-ui-vulkan",
@@ -55,7 +55,7 @@ project("xenia-app")
     kind("SharedLib")
     links({
       "xenia-gpu-vulkan-trace-viewer",
-      "xenia-hid-demo",
+      "xenia-hid-controller-demo",
       "xenia-ui-window-vulkan-demo",
     })
   filter(NOT_SINGLE_LIBRARY_FILTER)
@@ -93,7 +93,7 @@ project("xenia-app")
       -- TODO(Triang3l): CPU debugger on Android.
       "xenia-debug-ui",
       "xenia-helper-sdl",
-      "xenia-hid-sdl",
+      "xenia-hid-controller-sdl",
     })
 
   filter("platforms:Linux")
@@ -108,8 +108,8 @@ project("xenia-app")
     links({
       "xenia-apu-xaudio2",
       "xenia-gpu-d3d12",
-      "xenia-hid-winkey",
-      "xenia-hid-xinput",
+      "xenia-hid-controller-winkey",
+      "xenia-hid-controller-xinput",
       "xenia-ui-d3d12",
     })
 

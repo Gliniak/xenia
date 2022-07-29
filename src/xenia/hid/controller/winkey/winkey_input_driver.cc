@@ -7,12 +7,12 @@
  ******************************************************************************
  */
 
-#include "xenia/hid/winkey/winkey_input_driver.h"
+#include "xenia/hid/controller/winkey/winkey_input_driver.h"
 
 #include "xenia/base/logging.h"
 #include "xenia/base/platform_win.h"
-#include "xenia/hid/hid_flags.h"
-#include "xenia/hid/input_system.h"
+#include "xenia/hid/controller/hid_flags.h"
+#include "xenia/hid/controller/input_system.h"
 #include "xenia/ui/virtual_key.h"
 #include "xenia/ui/window.h"
 
