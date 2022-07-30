@@ -291,6 +291,7 @@ workspace("xenia")
   include("src/xenia/gpu/vulkan")
   include("src/xenia/hid/controller")
   include("src/xenia/hid/controller/nop")
+  include("src/xenia/hid/microphone")
   include("src/xenia/kernel")
   include("src/xenia/ui")
   include("src/xenia/ui/vulkan")
@@ -300,6 +301,7 @@ workspace("xenia")
     include("src/xenia/apu/sdl")
     include("src/xenia/helper/sdl")
     include("src/xenia/hid/controller/sdl")
+    include("src/xenia/hid/microphone/sdl")
   end
 
   if os.istarget("windows") then

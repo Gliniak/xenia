@@ -7,23 +7,20 @@
  ******************************************************************************
  */
 
-#ifndef XENIA_HID_SDL_SDL_HID_H_
-#define XENIA_HID_SDL_SDL_HID_H_
+#include "xenia/hid/microphone/sdl/sdl_hid.h"
 
-#include <memory>
-
-#include "xenia/hid/controller/input_system.h"
+#include "xenia/hid/microphone/sdl/sdl_microphone_driver.h"
 
 namespace xe {
 namespace hid {
+namespace microphone {
 namespace sdl {
-namespace controller {
 
-std::unique_ptr<InputDriver> Create(xe::ui::Window* window,
-                                    size_t window_z_order);
-}  // namespace controller
+std::unique_ptr<MicrophoneDriver> Create() {
+  return std::make_unique<SDLMicrophoneDriver>();
+}
+
+}  // namespace microphone
 }  // namespace sdl
 }  // namespace hid
 }  // namespace xe
-
-#endif  // XENIA_HID_SDL_SDL_HID_H_

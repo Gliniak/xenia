@@ -39,6 +39,8 @@ class GraphicsSystem;
 namespace hid {
 class InputDriver;
 class InputSystem;
+class MicrophoneDriver;
+class MicrophoneSystem;
 }  // namespace hid
 namespace ui {
 class ImGuiDrawer;
@@ -142,6 +144,11 @@ class Emulator {
   // Human-interface Device (HID) adapters for controllers.
   hid::InputSystem* input_system() const { return input_system_.get(); }
 
+  // Human-interface Device (HID) adapters for microphones
+  hid::MicrophoneSystem* microphone_system() const {
+    return microphone_system_.get();
+  }
+
   // Kernel function export table used to resolve exports when JITing code.
   cpu::ExportResolver* export_resolver() const {
     return export_resolver_.get();
@@ -167,7 +174,9 @@ class Emulator {
       std::function<std::unique_ptr<gpu::GraphicsSystem>()>
           graphics_system_factory,
       std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
-          input_driver_factory);
+          input_driver_factory,
+      std::function<std::vector<std::unique_ptr<hid::MicrophoneDriver>>()>
+          microphone_driver_factory);
 
   // Terminates the currently running title.
   X_STATUS TerminateTitle();
@@ -235,6 +244,7 @@ class Emulator {
   std::unique_ptr<apu::AudioSystem> audio_system_;
   std::unique_ptr<gpu::GraphicsSystem> graphics_system_;
   std::unique_ptr<hid::InputSystem> input_system_;
+  std::unique_ptr<hid::MicrophoneSystem> microphone_system_;
 
   std::unique_ptr<cpu::ExportResolver> export_resolver_;
   std::unique_ptr<vfs::VirtualFileSystem> file_system_;

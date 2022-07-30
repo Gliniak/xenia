@@ -13,6 +13,7 @@ project("xenia-kernel")
     "xenia-base",
     "xenia-cpu",
     "xenia-hid-controller",
+    "xenia-hid-microphone",
     "xenia-vfs",
   })
   defines({

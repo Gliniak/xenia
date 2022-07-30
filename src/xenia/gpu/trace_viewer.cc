@@ -132,7 +132,7 @@ bool TraceViewer::Setup() {
   emulator_ = std::make_unique<Emulator>("", "", "", "");
   X_STATUS result = emulator_->Setup(
       window_.get(), nullptr, false, nullptr,
-      [this]() { return CreateGraphicsSystem(); }, nullptr);
+      [this]() { return CreateGraphicsSystem(); }, nullptr, nullptr);
   if (XFAILED(result)) {
     XELOGE("Failed to setup emulator: {:08X}", result);
     return false;

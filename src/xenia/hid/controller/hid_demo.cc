@@ -127,7 +127,7 @@ std::vector<std::unique_ptr<hid::InputDriver>> HidDemoApp::CreateInputDrivers(
     drivers.emplace_back(xe::hid::nop::Create(window, kZOrderHidInput));
 #if !XE_PLATFORM_ANDROID
   } else if (cvars::hid.compare("sdl") == 0) {
-    auto driver = xe::hid::sdl::Create(window, kZOrderHidInput);
+    auto driver = xe::hid::sdl::controller::Create(window, kZOrderHidInput);
     if (XSUCCEEDED(driver->Setup())) {
       drivers.emplace_back(std::move(driver));
     }
@@ -146,7 +146,7 @@ std::vector<std::unique_ptr<hid::InputDriver>> HidDemoApp::CreateInputDrivers(
 #endif  // XE_PLATFORM_WIN32
   } else {
 #if !XE_PLATFORM_ANDROID
-    auto sdl_driver = xe::hid::sdl::Create(window, kZOrderHidInput);
+    auto sdl_driver = xe::hid::sdl::controller::Create(window, kZOrderHidInput);
     if (sdl_driver && XSUCCEEDED(sdl_driver->Setup())) {
       drivers.emplace_back(std::move(sdl_driver));
     }

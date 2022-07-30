@@ -14,12 +14,14 @@
 namespace xe {
 namespace hid {
 namespace sdl {
+namespace controller {
 
 std::unique_ptr<InputDriver> Create(xe::ui::Window* window,
                                     size_t window_z_order) {
   return std::make_unique<SDLInputDriver>(window, window_z_order);
 }
 
+}  // namespace controller
 }  // namespace sdl
 }  // namespace hid
 }  // namespace xe

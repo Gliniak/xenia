@@ -16,6 +16,7 @@ project("xenia-app")
     "xenia-gpu-vulkan",
     "xenia-hid-controller",
     "xenia-hid-controller-nop",
+    "xenia-hid-microphone",
     "xenia-kernel",
     "xenia-ui",
     "xenia-ui-vulkan",
@@ -94,6 +95,7 @@ project("xenia-app")
       "xenia-debug-ui",
       "xenia-helper-sdl",
       "xenia-hid-controller-sdl",
+      "xenia-hid-microphone-sdl",
     })
 
   filter("platforms:Linux")

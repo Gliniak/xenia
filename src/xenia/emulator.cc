@@ -33,6 +33,8 @@
 #include "xenia/gpu/graphics_system.h"
 #include "xenia/hid/controller/input_driver.h"
 #include "xenia/hid/controller/input_system.h"
+#include "xenia/hid/microphone/microphone_driver.h"
+#include "xenia/hid/microphone/microphone_system.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/gameinfo_utils.h"
@@ -96,6 +98,7 @@ Emulator::Emulator(const std::filesystem::path& command_line,
       audio_system_(),
       graphics_system_(),
       input_system_(),
+      microphone_system_(),
       export_resolver_(),
       file_system_(),
       kernel_state_(),
@@ -119,6 +122,7 @@ Emulator::~Emulator() {
   input_system_.reset();
   graphics_system_.reset();
   audio_system_.reset();
+  microphone_system_.reset();
 
   kernel_state_.reset();
   file_system_.reset();
@@ -138,7 +142,9 @@ X_STATUS Emulator::Setup(
     std::function<std::unique_ptr<gpu::GraphicsSystem>()>
         graphics_system_factory,
     std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
-        input_driver_factory) {
+        input_driver_factory,
+    std::function<std::vector<std::unique_ptr<hid::MicrophoneDriver>>()>
+        microphone_driver_factory) {
   X_STATUS result = X_STATUS_UNSUCCESSFUL;
 
   display_window_ = display_window;
@@ -203,7 +209,7 @@ X_STATUS Emulator::Setup(
     return X_STATUS_NOT_IMPLEMENTED;
   }
 
-  // Initialize the HID.
+  // Initialize the HID controller.
   input_system_ = std::make_unique<xe::hid::InputSystem>(display_window_);
   if (!input_system_) {
     return X_STATUS_NOT_IMPLEMENTED;
@@ -219,6 +225,27 @@ X_STATUS Emulator::Setup(
   }
 
   result = input_system_->Setup();
+  if (result) {
+    return result;
+  }
+
+  // Initialize the HID microphone
+  microphone_system_ = std::make_unique<xe::hid::MicrophoneSystem>();
+  
+  if (!microphone_system_) {
+    return X_STATUS_NOT_IMPLEMENTED;
+  }
+  if (microphone_driver_factory) {
+    auto input_drivers = microphone_driver_factory();
+    for (size_t i = 0; i < input_drivers.size(); ++i) {
+      auto& input_driver = input_drivers[i];
+      input_driver->set_is_active_callback(
+          []() -> bool { return !xe::kernel::xam::xeXamIsUIActive(); });
+      microphone_system_->AddDriver(std::move(input_driver));
+    }
+  }
+
+  result = microphone_system_->Setup();
   if (result) {
     return result;
   }

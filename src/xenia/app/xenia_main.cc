@@ -54,6 +54,7 @@
 #include "xenia/hid/controller/nop/nop_hid.h"
 #if !XE_PLATFORM_ANDROID
 #include "xenia/hid/controller/sdl/sdl_hid.h"
+#include "xenia/hid/microphone/sdl/sdl_hid.h"
 #endif  // !XE_PLATFORM_ANDROID
 #if XE_PLATFORM_WIN32
 #include "xenia/hid/controller/winkey/winkey_hid.h"
@@ -214,6 +215,8 @@ class EmulatorApp final : public xe::ui::WindowedApp {
   static std::unique_ptr<gpu::GraphicsSystem> CreateGraphicsSystem();
   static std::vector<std::unique_ptr<hid::InputDriver>> CreateInputDrivers(
       ui::Window* window);
+  static std::vector<std::unique_ptr<hid::MicrophoneDriver>>
+  CreateMicrophoneDrivers();
 
   void EmulatorThread();
   void ShutdownEmulatorThreadFromUIThread();
@@ -357,7 +360,7 @@ std::vector<std::unique_ptr<hid::InputDriver>> EmulatorApp::CreateInputDrivers(
     factory.Add("xinput", xe::hid::xinput::Create);
 #endif  // XE_PLATFORM_WIN32
 #if !XE_PLATFORM_ANDROID
-    factory.Add("sdl", xe::hid::sdl::Create);
+    factory.Add("sdl", xe::hid::sdl::controller::Create);
 #endif  // !XE_PLATFORM_ANDROID
 #if XE_PLATFORM_WIN32
     // WinKey input driver should always be the last input driver added!
@@ -374,6 +377,27 @@ std::vector<std::unique_ptr<hid::InputDriver>> EmulatorApp::CreateInputDrivers(
       drivers.emplace_back(
           xe::hid::nop::Create(window, EmulatorWindow::kZOrderHidInput));
     }
+  }
+  return drivers;
+}
+
+std::vector<std::unique_ptr<hid::MicrophoneDriver>>
+EmulatorApp::CreateMicrophoneDrivers() {
+  std::vector<std::unique_ptr<hid::MicrophoneDriver>> drivers;
+  Factory<hid::MicrophoneDriver> factory;
+  #if !XE_PLATFORM_ANDROID
+  factory.Add("sdl", xe::hid::microphone::sdl::Create);
+  #endif  // !XE_PLATFORM_ANDROID
+  for (auto& driver :
+       factory.CreateAll("sdl")) {
+    if (XSUCCEEDED(driver->Setup())) {
+      drivers.emplace_back(std::move(driver));
+    }
+  }
+  if (drivers.empty()) {
+    // Fallback to nop if none created.
+    //drivers.emplace_back(
+    //    xe::hid::nop::Create(window, EmulatorWindow::kZOrderHidInput));
   }
   return drivers;
 }
@@ -486,7 +510,8 @@ void EmulatorApp::EmulatorThread() {
   // (unsupported system, memory issues, etc) this will fail early.
   X_STATUS result = emulator_->Setup(
       emulator_window_->window(), emulator_window_->imgui_drawer(), true,
-      CreateAudioSystem, CreateGraphicsSystem, CreateInputDrivers);
+      CreateAudioSystem, CreateGraphicsSystem, CreateInputDrivers,
+      CreateMicrophoneDrivers);
   if (XFAILED(result)) {
     XELOGE("Failed to setup emulator: {:08X}", result);
     app_context().RequestDeferredQuit();

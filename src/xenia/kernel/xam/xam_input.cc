@@ -180,13 +180,18 @@ dword_result_t XamInputGetKeystrokeEx_entry(
 DECLARE_XAM_EXPORT1(XamInputGetKeystrokeEx, kInput, kImplemented);
 
 X_HRESULT_result_t XamUserGetDeviceContext_entry(dword_t user_index,
-                                                 dword_t unk,
+                                                 dword_t device_type,
                                                  lpdword_t out_ptr) {
   // Games check the result - usually with some masking.
   // If this function fails they assume zero, so let's fail AND
   // set zero just to be safe.
   *out_ptr = 0;
   if (!user_index || (user_index & 0xFF) == 0xFF) {
+    if (device_type == 4) {  // Microphone
+      // Check if microphone is connected
+      // Then set *out_ptr = 6 << 28;
+      *out_ptr = 6 << 28;
+    }
     return X_E_SUCCESS;
   } else {
     return X_E_DEVICE_NOT_CONNECTED;
