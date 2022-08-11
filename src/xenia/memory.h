@@ -157,6 +157,14 @@ class BaseHeap {
                           uint32_t allocation_type, uint32_t protect,
                           bool top_down, uint32_t* out_address);
 
+  // Allocates pages with the given properties and allocation strategy.
+  // System heap is only in range of 0x30000000-0x3FFFFFFF
+  // This can reserve and commit the pages as well as set protection modes.
+  // This will fail if not enough contiguous pages can be found.
+  virtual bool AllocSystemHeap(uint32_t size, uint32_t alignment,
+                               uint32_t allocation_type, uint32_t protect,
+                               bool top_down, uint32_t* out_address);
+
   // Decommits pages in the given range.
   // Partial overlapping pages will also be decommitted.
   virtual bool Decommit(uint32_t address, uint32_t size);
