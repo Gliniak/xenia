@@ -120,7 +120,8 @@ dword_result_t NtAllocateVirtualMemory_entry(lpdword_t base_addr_ptr,
   uint32_t adjusted_size = int32_t(*region_size_ptr) < 0
                                ? -int32_t(region_size_ptr.value())
                                : region_size_ptr.value();
-  adjusted_size = xe::round_up(adjusted_size, page_size);
+  adjusted_size =
+      xe::round_up(adjusted_size, adjusted_base ? page_size : 64 * 1024);
 
   // Allocate.
   uint32_t allocation_type = 0;
