@@ -765,6 +765,15 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     return X_STATUS_NOT_FOUND;
   }
 
+  // Allocate module workspace
+  uint32_t workspace_address = 0;
+  kernel_state_->memory()
+      ->LookupHeapByType(false, 0x1000)
+      ->Alloc(module->workspace_size(), 0x1000,
+              kMemoryAllocationReserve | kMemoryAllocationCommit,
+              kMemoryProtectRead | kMemoryProtectWrite, false,
+              &workspace_address);
+
   // Grab the current title ID.
   xex2_opt_execution_info* info = nullptr;
   module->GetOptHeader(XEX_HEADER_EXECUTION_INFO, &info);
