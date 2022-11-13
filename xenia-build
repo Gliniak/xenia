@@ -134,8 +134,9 @@ def main():
         print('')
 
     # Check python version.
-    if not sys.version_info[:2] >= (3, 6):
-        print('ERROR: Python 3.6+ must be installed and on PATH')
+    python_minimum_ver=3,6
+    if not sys.version_info[:2] >= (python_minimum_ver[0], python_minimum_ver[1]):
+        print('ERROR: Python ', python_minimum_ver[0], '.', python_minimum_ver[1], '+ must be installed and on PATH', sep='')
         sys.exit(1)
 
     # Grab Visual Studio version and execute shell to set up environment.
@@ -431,6 +432,7 @@ def get_clang_format_binary():
     attempts = [
         'C:\\Program Files\\LLVM\\bin\\clang-format.exe',
         'C:\\Program Files (x86)\\LLVM\\bin\\clang-format.exe',
+        'clang-format-14',
         'clang-format-13',
         'clang-format',
         ]
@@ -673,11 +675,11 @@ class SetupCommand(Command):
         print('')
 
         print('- running premake...')
-        if run_platform_premake(target_os_override=args['target_os']) == 0:
-            print('')
-            print('Success!')
+        ret = run_platform_premake(target_os_override=args['target_os'])
+        print('')
+        print('Success!' if ret == 0 else 'Error!')
 
-        return 0
+        return ret
 
 
 class PullCommand(Command):
@@ -755,11 +757,11 @@ class PremakeCommand(Command):
         # Update premake. If no binary found, it will be built from source.
         print('Running premake...')
         print('')
-        if run_platform_premake(target_os_override=args['target_os'],
-                                cc=args['cc'], devenv=args['devenv']) == 0:
-            print('Success!')
+        ret = run_platform_premake(target_os_override=args['target_os'],
+                                   cc=args['cc'], devenv=args['devenv'])
+        print('Success!' if ret == 0 else 'Error!')
 
-        return 0
+        return ret
 
 
 class BaseBuildCommand(Command):
@@ -1829,4 +1831,3 @@ class DevenvCommand(Command):
 
 if __name__ == '__main__':
     main()
-

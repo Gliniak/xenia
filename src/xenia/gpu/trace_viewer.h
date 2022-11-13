@@ -10,7 +10,7 @@
 #ifndef XENIA_GPU_TRACE_VIEWER_H_
 #define XENIA_GPU_TRACE_VIEWER_H_
 
-#include <string>
+#include <string_view>
 
 #include "xenia/emulator.h"
 #include "xenia/gpu/shader.h"
@@ -21,7 +21,6 @@
 #include "xenia/ui/imgui_dialog.h"
 #include "xenia/ui/imgui_drawer.h"
 #include "xenia/ui/immediate_drawer.h"
-#include "xenia/ui/presenter.h"
 #include "xenia/ui/window.h"
 #include "xenia/ui/window_listener.h"
 #include "xenia/ui/windowed_app.h"
@@ -96,7 +95,12 @@ class TraceViewer : public xe::ui::WindowedApp {
     kHostDisasm,
   };
 
-  bool Load(const std::filesystem::path& trace_file_path);
+  // Same as for Dear ImGui tooltips. Windows are translucent as the controls
+  // may take a pretty large fraction of the screen, especially on small
+  // screens, so the image from the guest can be seen through them.
+  static constexpr float kWindowBgAlpha = 0.6f;
+
+  bool Load(const std::string_view trace_file_path);
 
   void DrawUI();
   void DrawControllerUI();
@@ -129,7 +133,6 @@ class TraceViewer : public xe::ui::WindowedApp {
   GraphicsSystem* graphics_system_ = nullptr;
   std::unique_ptr<TracePlayer> player_;
 
-  std::unique_ptr<xe::ui::Presenter> presenter_;
   std::unique_ptr<xe::ui::ImmediateDrawer> immediate_drawer_;
   std::unique_ptr<xe::ui::ImGuiDrawer> imgui_drawer_;
   std::unique_ptr<TraceViewerDialog> trace_viewer_dialog_;

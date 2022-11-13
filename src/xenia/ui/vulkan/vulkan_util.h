@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <cstdint>
 
-#include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/ui/vulkan/vulkan_provider.h"
 
@@ -21,13 +20,6 @@ namespace xe {
 namespace ui {
 namespace vulkan {
 namespace util {
-
-inline void CheckResult(VkResult result, const char* action) {
-  if (result != VK_SUCCESS) {
-    XELOGE("Vulkan check: {} returned 0x{:X}", action, uint32_t(result));
-  }
-  assert_true(result == VK_SUCCESS, action);
-}
 
 template <typename F, typename T>
 inline bool DestroyAndNullHandle(F* destroy_function, T& handle) {
@@ -155,6 +147,8 @@ bool CreateDedicatedAllocationImage(const VulkanProvider& provider,
                                     uint32_t* memory_type_out = nullptr,
                                     VkDeviceSize* memory_size_out = nullptr);
 
+// Explicitly accepting const uint32_t* to make sure attention is paid to the
+// alignment where this is called for safety on different host architectures.
 inline VkShaderModule CreateShaderModule(const VulkanProvider& provider,
                                          const uint32_t* code,
                                          size_t code_size_bytes) {
@@ -171,6 +165,17 @@ inline VkShaderModule CreateShaderModule(const VulkanProvider& provider,
              ? shader_module
              : VK_NULL_HANDLE;
 }
+
+VkPipeline CreateComputePipeline(
+    const VulkanProvider& provider, VkPipelineLayout layout,
+    VkShaderModule shader,
+    const VkSpecializationInfo* specialization_info = nullptr,
+    const char* entry_point = "main");
+VkPipeline CreateComputePipeline(
+    const VulkanProvider& provider, VkPipelineLayout layout,
+    const uint32_t* shader_code, size_t shader_code_size_bytes,
+    const VkSpecializationInfo* specialization_info = nullptr,
+    const char* entry_point = "main");
 
 }  // namespace util
 }  // namespace vulkan

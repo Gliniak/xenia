@@ -10,6 +10,7 @@
 #include "xenia/gpu/d3d12/d3d12_render_target_cache.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -26,8 +27,8 @@
 #include "xenia/base/math.h"
 #include "xenia/base/string.h"
 #include "xenia/gpu/d3d12/d3d12_command_processor.h"
+#include "xenia/gpu/d3d12/d3d12_texture_cache.h"
 #include "xenia/gpu/d3d12/deferred_command_list.h"
-#include "xenia/gpu/d3d12/texture_cache.h"
 #include "xenia/gpu/draw_util.h"
 #include "xenia/gpu/dxbc.h"
 #include "xenia/gpu/dxbc_shader_translator.h"
@@ -77,7 +78,7 @@ namespace d3d12 {
 // Generated with `xb buildshaders`.
 namespace shaders {
 #include "xenia/gpu/shaders/bytecode/d3d12_5_1/clear_uint2_ps.h"
-#include "xenia/gpu/shaders/bytecode/d3d12_5_1/fullscreen_vs.h"
+#include "xenia/gpu/shaders/bytecode/d3d12_5_1/fullscreen_cw_vs.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_5_1/host_depth_store_1xmsaa_cs.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_5_1/host_depth_store_2xmsaa_cs.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_5_1/host_depth_store_4xmsaa_cs.h"
@@ -250,35 +251,10 @@ bool D3D12RenderTargetCache::Initialize() {
     path_ = Path::kHostRenderTargets;
   }
 
-  uint32_t config_resolution_scale_x =
-      uint32_t(std::max(cvars::draw_resolution_scale_x, int32_t(1)));
-  uint32_t config_resolution_scale_y =
-      uint32_t(std::max(cvars::draw_resolution_scale_y, int32_t(1)));
-  // Hard limit, originating from the half-pixel offset (two-pixel offset is too
-  // much, the resolve shaders, being generic for different scales, only
-  // duplicate the second pixel into the first, not the third), and also due to
-  // the bit counts used for passing the scale to shaders, and hardcoded scales
-  // and shifts for fast division by integer constants.
-  const uint32_t kMaxResolutionScale = 3;
-  resolution_scale_x_ =
-      std::min(config_resolution_scale_x, kMaxResolutionScale);
-  resolution_scale_y_ =
-      std::min(config_resolution_scale_y, kMaxResolutionScale);
-  TextureCache::ClampDrawResolutionScaleToSupportedRange(
-      resolution_scale_x_, resolution_scale_y_, provider);
-  if (resolution_scale_x_ != config_resolution_scale_x ||
-      resolution_scale_y_ != config_resolution_scale_y) {
-    XELOGW(
-        "D3D12RenderTargetCache: {}x{} resolution scale not supported by the "
-        "device or the emulator, reducing to {}x{}",
-        config_resolution_scale_x, config_resolution_scale_y,
-        resolution_scale_x_, resolution_scale_y_);
-  }
-  bool resolution_scaled = resolution_scale_x_ > 1 || resolution_scale_y_ > 1;
-
   // Create the buffer for reinterpreting EDRAM contents.
   uint32_t edram_buffer_size =
-      xenos::kEdramSizeBytes * resolution_scale_x_ * resolution_scale_y_;
+      xenos::kEdramSizeBytes *
+      (draw_resolution_scale_x() * draw_resolution_scale_y());
   D3D12_RESOURCE_DESC edram_buffer_desc;
   ui::d3d12::util::FillBufferResourceDesc(
       edram_buffer_desc, edram_buffer_size,
@@ -369,8 +345,10 @@ bool D3D12RenderTargetCache::Initialize() {
           uint32_t(EdramBufferDescriptorIndex::kR32G32B32A32UintUAV)),
       edram_buffer_, DXGI_FORMAT_R32G32B32A32_UINT, edram_buffer_size >> 4);
 
+  bool draw_resolution_scaled = IsDrawResolutionScaled();
+
   // Create the resolve copying root signature.
-  D3D12_ROOT_PARAMETER resolve_copy_root_parameters[4];
+  std::array<D3D12_ROOT_PARAMETER, 3> resolve_copy_root_parameters;
   // Parameter 0 is constants.
   resolve_copy_root_parameters[0].ParameterType =
       D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -379,7 +357,7 @@ bool D3D12RenderTargetCache::Initialize() {
   // Binding all of the shared memory at 1x resolution, portions with scaled
   // resolution.
   resolve_copy_root_parameters[0].Constants.Num32BitValues =
-      (IsResolutionScaled()
+      (draw_resolution_scaled
            ? sizeof(draw_util::ResolveCopyShaderConstants::DestRelative)
            : sizeof(draw_util::ResolveCopyShaderConstants)) /
       sizeof(uint32_t);
@@ -413,22 +391,11 @@ bool D3D12RenderTargetCache::Initialize() {
       &resolve_copy_source_range;
   resolve_copy_root_parameters[2].ShaderVisibility =
       D3D12_SHADER_VISIBILITY_ALL;
-  // Parameter 3 is the resolution scale.
-  if (resolution_scaled) {
-    resolve_copy_root_parameters[3].ParameterType =
-        D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    resolve_copy_root_parameters[3].Constants.ShaderRegister = 1;
-    resolve_copy_root_parameters[3].Constants.RegisterSpace = 0;
-    // Binding all of the shared memory at 1x resolution, portions with scaled
-    // resolution.
-    resolve_copy_root_parameters[3].Constants.Num32BitValues =
-        sizeof(draw_util::ResolveResolutionScaleConstant) / sizeof(uint32_t);
-    resolve_copy_root_parameters[3].ShaderVisibility =
-        D3D12_SHADER_VISIBILITY_ALL;
-  }
   D3D12_ROOT_SIGNATURE_DESC resolve_copy_root_signature_desc;
-  resolve_copy_root_signature_desc.NumParameters = resolution_scaled ? 4 : 3;
-  resolve_copy_root_signature_desc.pParameters = resolve_copy_root_parameters;
+  resolve_copy_root_signature_desc.NumParameters =
+      UINT(resolve_copy_root_parameters.size());
+  resolve_copy_root_signature_desc.pParameters =
+      resolve_copy_root_parameters.data();
   resolve_copy_root_signature_desc.NumStaticSamplers = 0;
   resolve_copy_root_signature_desc.pStaticSamplers = nullptr;
   resolve_copy_root_signature_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
@@ -457,10 +424,10 @@ bool D3D12RenderTargetCache::Initialize() {
     ID3D12PipelineState* resolve_copy_pipeline =
         ui::d3d12::util::CreateComputePipeline(
             device,
-            resolution_scaled ? resolve_copy_shader_code.scaled
-                              : resolve_copy_shader_code.unscaled,
-            resolution_scaled ? resolve_copy_shader_code.scaled_size
-                              : resolve_copy_shader_code.unscaled_size,
+            draw_resolution_scaled ? resolve_copy_shader_code.scaled
+                                   : resolve_copy_shader_code.unscaled,
+            draw_resolution_scaled ? resolve_copy_shader_code.scaled_size
+                                   : resolve_copy_shader_code.unscaled_size,
             resolve_copy_root_signature_);
     if (resolve_copy_pipeline == nullptr) {
       XELOGE(
@@ -490,7 +457,9 @@ bool D3D12RenderTargetCache::Initialize() {
 
     gamma_render_target_as_srgb_ = cvars::gamma_render_target_as_srgb;
 
-    depth_float24_conversion_ = GetConfigDepthFloat24Conversion();
+    depth_float24_round_ = cvars::depth_float24_round;
+    depth_float24_convert_in_pixel_shader_ =
+        cvars::depth_float24_convert_in_pixel_shader;
 
     // Check if 2x MSAA is supported or needs to be emulated with 4x MSAA
     // instead.
@@ -985,9 +954,10 @@ bool D3D12RenderTargetCache::Initialize() {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC uint32_rtv_clear_pipeline_desc = {};
     uint32_rtv_clear_pipeline_desc.pRootSignature =
         uint32_rtv_clear_root_signature_;
-    uint32_rtv_clear_pipeline_desc.VS.pShaderBytecode = shaders::fullscreen_vs;
+    uint32_rtv_clear_pipeline_desc.VS.pShaderBytecode =
+        shaders::fullscreen_cw_vs;
     uint32_rtv_clear_pipeline_desc.VS.BytecodeLength =
-        sizeof(shaders::fullscreen_vs);
+        sizeof(shaders::fullscreen_cw_vs);
     uint32_rtv_clear_pipeline_desc.PS.pShaderBytecode = shaders::clear_uint2_ps;
     uint32_rtv_clear_pipeline_desc.PS.BytecodeLength =
         sizeof(shaders::clear_uint2_ps);
@@ -1046,14 +1016,15 @@ bool D3D12RenderTargetCache::Initialize() {
     // Blending is done in linear space directly in shaders.
     gamma_render_target_as_srgb_ = false;
 
-    // Always true float24 depth.
-    depth_float24_conversion_ = DepthFloat24Conversion::kOnOutputRounding;
+    // Always true float24 depth rounded to the nearest even.
+    depth_float24_round_ = true;
+    depth_float24_convert_in_pixel_shader_ = true;
 
     // Only ForcedSampleCount, which doesn't support 2x.
     msaa_2x_supported_ = false;
 
     // Create the resolve EDRAM buffer clearing root signature.
-    D3D12_ROOT_PARAMETER resolve_rov_clear_root_parameters[3];
+    std::array<D3D12_ROOT_PARAMETER, 2> resolve_rov_clear_root_parameters;
     // Parameter 0 is constants.
     resolve_rov_clear_root_parameters[0].ParameterType =
         D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -1080,24 +1051,11 @@ bool D3D12RenderTargetCache::Initialize() {
         &resolve_rov_clear_dest_range;
     resolve_rov_clear_root_parameters[1].ShaderVisibility =
         D3D12_SHADER_VISIBILITY_ALL;
-    // Parameter 2 is the resolution scale.
-    if (resolution_scaled) {
-      resolve_rov_clear_root_parameters[2].ParameterType =
-          D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-      resolve_rov_clear_root_parameters[2].Constants.ShaderRegister = 1;
-      resolve_rov_clear_root_parameters[2].Constants.RegisterSpace = 0;
-      // Binding all of the shared memory at 1x resolution, portions with scaled
-      // resolution.
-      resolve_rov_clear_root_parameters[2].Constants.Num32BitValues =
-          sizeof(draw_util::ResolveResolutionScaleConstant) / sizeof(uint32_t);
-      resolve_rov_clear_root_parameters[2].ShaderVisibility =
-          D3D12_SHADER_VISIBILITY_ALL;
-    }
     D3D12_ROOT_SIGNATURE_DESC resolve_rov_clear_root_signature_desc;
     resolve_rov_clear_root_signature_desc.NumParameters =
-        resolution_scaled ? 3 : 2;
+        UINT(resolve_rov_clear_root_parameters.size());
     resolve_rov_clear_root_signature_desc.pParameters =
-        resolve_rov_clear_root_parameters;
+        resolve_rov_clear_root_parameters.data();
     resolve_rov_clear_root_signature_desc.NumStaticSamplers = 0;
     resolve_rov_clear_root_signature_desc.pStaticSamplers = nullptr;
     resolve_rov_clear_root_signature_desc.Flags =
@@ -1115,10 +1073,10 @@ bool D3D12RenderTargetCache::Initialize() {
     // Create the resolve EDRAM buffer clearing pipelines.
     resolve_rov_clear_32bpp_pipeline_ = ui::d3d12::util::CreateComputePipeline(
         device,
-        resolution_scaled ? shaders::resolve_clear_32bpp_scaled_cs
-                          : shaders::resolve_clear_32bpp_cs,
-        resolution_scaled ? sizeof(shaders::resolve_clear_32bpp_scaled_cs)
-                          : sizeof(shaders::resolve_clear_32bpp_cs),
+        draw_resolution_scaled ? shaders::resolve_clear_32bpp_scaled_cs
+                               : shaders::resolve_clear_32bpp_cs,
+        draw_resolution_scaled ? sizeof(shaders::resolve_clear_32bpp_scaled_cs)
+                               : sizeof(shaders::resolve_clear_32bpp_cs),
         resolve_rov_clear_root_signature_);
     if (resolve_rov_clear_32bpp_pipeline_ == nullptr) {
       XELOGE(
@@ -1130,10 +1088,10 @@ bool D3D12RenderTargetCache::Initialize() {
     resolve_rov_clear_32bpp_pipeline_->SetName(L"Resolve Clear 32bpp");
     resolve_rov_clear_64bpp_pipeline_ = ui::d3d12::util::CreateComputePipeline(
         device,
-        resolution_scaled ? shaders::resolve_clear_64bpp_scaled_cs
-                          : shaders::resolve_clear_64bpp_cs,
-        resolution_scaled ? sizeof(shaders::resolve_clear_64bpp_scaled_cs)
-                          : sizeof(shaders::resolve_clear_64bpp_cs),
+        draw_resolution_scaled ? shaders::resolve_clear_64bpp_scaled_cs
+                               : shaders::resolve_clear_64bpp_cs,
+        draw_resolution_scaled ? sizeof(shaders::resolve_clear_64bpp_scaled_cs)
+                               : sizeof(shaders::resolve_clear_64bpp_cs),
         resolve_rov_clear_root_signature_);
     if (resolve_rov_clear_64bpp_pipeline_ == nullptr) {
       XELOGE(
@@ -1366,36 +1324,34 @@ void D3D12RenderTargetCache::WriteEdramUintPow2UAVDescriptor(
 
 bool D3D12RenderTargetCache::Resolve(const Memory& memory,
                                      D3D12SharedMemory& shared_memory,
-                                     TextureCache& texture_cache,
+                                     D3D12TextureCache& texture_cache,
                                      uint32_t& written_address_out,
                                      uint32_t& written_length_out) {
   written_address_out = 0;
   written_length_out = 0;
 
-  bool resolution_scaled = IsResolutionScaled();
+  bool draw_resolution_scaled = IsDrawResolutionScaled();
 
   draw_util::ResolveInfo resolve_info;
+  bool fixed_16_truncated_to_minus_1_to_1 = IsFixed16TruncatedToMinus1To1();
   if (!draw_util::GetResolveInfo(
-          register_file(), memory, trace_writer_, resolution_scaled,
-          IsFixed16TruncatedToMinus1To1(), resolve_info)) {
+          register_file(), memory, trace_writer_, draw_resolution_scale_x(),
+          draw_resolution_scale_y(), fixed_16_truncated_to_minus_1_to_1,
+          fixed_16_truncated_to_minus_1_to_1, resolve_info)) {
     return false;
   }
 
   // Nothing to copy/clear.
-  if (!resolve_info.address.width_div_8 || !resolve_info.address.height_div_8) {
+  if (!resolve_info.coordinate_info.width_div_8 || !resolve_info.height_div_8) {
     return true;
   }
-
-  draw_util::ResolveResolutionScaleConstant resolution_scale_constant;
-  resolution_scale_constant.resolution_scale_x = resolution_scale_x_;
-  resolution_scale_constant.resolution_scale_y = resolution_scale_y_;
 
   DeferredCommandList& command_list =
       command_processor_.GetDeferredCommandList();
 
   // Copying.
   bool copied = false;
-  if (resolve_info.copy_dest_length) {
+  if (resolve_info.copy_dest_extent_length) {
     if (GetPath() == Path::kHostRenderTargets) {
       // Dump the current contents of the render targets owning the affected
       // range to edram_buffer_.
@@ -1413,8 +1369,8 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
     draw_util::ResolveCopyShaderConstants copy_shader_constants;
     uint32_t copy_group_count_x, copy_group_count_y;
     draw_util::ResolveCopyShaderIndex copy_shader = resolve_info.GetCopyShader(
-        resolution_scale_x_, resolution_scale_y_, copy_shader_constants,
-        copy_group_count_x, copy_group_count_y);
+        draw_resolution_scale_x(), draw_resolution_scale_y(),
+        copy_shader_constants, copy_group_count_x, copy_group_count_y);
     assert_true(copy_group_count_x && copy_group_count_y);
     if (copy_shader != draw_util::ResolveCopyShaderIndex::kUnknown) {
       const draw_util::ResolveCopyShaderInfo& copy_shader_info =
@@ -1422,29 +1378,37 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
 
       // Make sure there is memory to write to.
       bool copy_dest_committed;
-      if (resolution_scaled) {
-        copy_dest_committed =
-            texture_cache.EnsureScaledResolveMemoryCommitted(
-                resolve_info.copy_dest_base, resolve_info.copy_dest_length) &&
-            texture_cache.MakeScaledResolveRangeCurrent(
-                resolve_info.copy_dest_base, resolve_info.copy_dest_length);
+      if (draw_resolution_scaled) {
+        // Committing starting with the beginning of the potentially written
+        // extent, but making the buffer containing the base current as the
+        // beginning of the bound buffer is the base.
+        copy_dest_committed = texture_cache.EnsureScaledResolveMemoryCommitted(
+                                  resolve_info.copy_dest_extent_start,
+                                  resolve_info.copy_dest_extent_length) &&
+                              texture_cache.MakeScaledResolveRangeCurrent(
+                                  resolve_info.copy_dest_base,
+                                  resolve_info.copy_dest_extent_start -
+                                      resolve_info.copy_dest_base +
+                                      resolve_info.copy_dest_extent_length);
       } else {
-        copy_dest_committed = shared_memory.RequestRange(
-            resolve_info.copy_dest_base, resolve_info.copy_dest_length);
+        copy_dest_committed =
+            shared_memory.RequestRange(resolve_info.copy_dest_extent_start,
+                                       resolve_info.copy_dest_extent_length);
       }
       if (copy_dest_committed) {
         // Write the descriptors and transition the resources.
         // Full shared memory without resolution scaling, range of the scaled
-        // resolve buffer with scaling because only 128 R32 elements can be
-        // addressed on Nvidia.
+        // resolve buffer with scaling because only at least 128 * 2^20 R32
+        // elements must be addressable
+        // (D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP).
         ui::d3d12::util::DescriptorCpuGpuHandlePair descriptor_dest;
         ui::d3d12::util::DescriptorCpuGpuHandlePair descriptor_source;
         ui::d3d12::util::DescriptorCpuGpuHandlePair descriptors[2];
         if (command_processor_.RequestOneUseSingleViewDescriptors(
-                bindless_resources_used_ ? uint32_t(resolution_scaled) : 2,
+                bindless_resources_used_ ? uint32_t(draw_resolution_scaled) : 2,
                 descriptors)) {
           if (bindless_resources_used_) {
-            if (resolution_scaled) {
+            if (draw_resolution_scaled) {
               descriptor_dest = descriptors[0];
             } else {
               descriptor_dest =
@@ -1463,7 +1427,7 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
             }
           } else {
             descriptor_dest = descriptors[0];
-            if (!resolution_scaled) {
+            if (!draw_resolution_scaled) {
               shared_memory.WriteUintPow2UAVDescriptor(
                   descriptor_dest.first, copy_shader_info.dest_bpe_log2);
             }
@@ -1475,7 +1439,7 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
                                               copy_shader_info.source_bpe_log2);
             }
           }
-          if (resolution_scaled) {
+          if (draw_resolution_scaled) {
             texture_cache.CreateCurrentScaledResolveRangeUintPow2UAV(
                 descriptor_dest.first, copy_shader_info.dest_bpe_log2);
             texture_cache.TransitionCurrentScaledResolveRange(
@@ -1487,16 +1451,11 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
 
           // Submit the resolve.
           command_list.D3DSetComputeRootSignature(resolve_copy_root_signature_);
-          if (resolution_scaled) {
-            command_list.D3DSetComputeRoot32BitConstants(
-                3, sizeof(resolution_scale_constant) / sizeof(uint32_t),
-                &resolution_scale_constant, 0);
-          }
           command_list.D3DSetComputeRootDescriptorTable(
               2, descriptor_source.second);
           command_list.D3DSetComputeRootDescriptorTable(1,
                                                         descriptor_dest.second);
-          if (resolution_scaled) {
+          if (draw_resolution_scaled) {
             command_list.D3DSetComputeRoot32BitConstants(
                 0,
                 sizeof(copy_shader_constants.dest_relative) / sizeof(uint32_t),
@@ -1512,17 +1471,18 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
           command_list.D3DDispatch(copy_group_count_x, copy_group_count_y, 1);
 
           // Order the resolve with other work using the destination as a UAV.
-          if (resolution_scaled) {
+          if (draw_resolution_scaled) {
             texture_cache.MarkCurrentScaledResolveRangeUAVWritesCommitNeeded();
           } else {
             shared_memory.MarkUAVWritesCommitNeeded();
           }
 
           // Invalidate textures and mark the range as scaled if needed.
-          texture_cache.MarkRangeAsResolved(resolve_info.copy_dest_base,
-                                            resolve_info.copy_dest_length);
-          written_address_out = resolve_info.copy_dest_base;
-          written_length_out = resolve_info.copy_dest_length;
+          texture_cache.MarkRangeAsResolved(
+              resolve_info.copy_dest_extent_start,
+              resolve_info.copy_dest_extent_length);
+          written_address_out = resolve_info.copy_dest_extent_start;
+          written_length_out = resolve_info.copy_dest_extent_length;
           copied = true;
         }
       } else {
@@ -1585,16 +1545,11 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
           CommitEdramBufferUAVWrites();
           command_list.D3DSetComputeRootSignature(
               resolve_rov_clear_root_signature_);
-          if (resolution_scaled) {
-            command_list.D3DSetComputeRoot32BitConstants(
-                2, sizeof(resolution_scale_constant) / sizeof(uint32_t),
-                &resolution_scale_constant, 0);
-          }
           command_list.D3DSetComputeRootDescriptorTable(
               1, descriptor_edram.second);
           std::pair<uint32_t, uint32_t> clear_group_count =
-              resolve_info.GetClearShaderGroupCount(resolution_scale_x_,
-                                                    resolution_scale_y_);
+              resolve_info.GetClearShaderGroupCount(draw_resolution_scale_x(),
+                                                    draw_resolution_scale_y());
           assert_true(clear_group_count.first && clear_group_count.second);
           if (clear_depth) {
             draw_util::ResolveClearShaderConstants depth_clear_constants;
@@ -1648,7 +1603,7 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
 }
 
 bool D3D12RenderTargetCache::InitializeTraceSubmitDownloads() {
-  if (IsResolutionScaled()) {
+  if (IsDrawResolutionScaled()) {
     // No 1:1 mapping.
     return false;
   }
@@ -1704,7 +1659,7 @@ void D3D12RenderTargetCache::InitializeTraceCompleteDownloads() {
 }
 
 void D3D12RenderTargetCache::RestoreEdramSnapshot(const void* snapshot) {
-  if (IsResolutionScaled()) {
+  if (IsDrawResolutionScaled()) {
     // No 1:1 mapping.
     return;
   }
@@ -1962,10 +1917,10 @@ RenderTargetCache::RenderTarget* D3D12RenderTargetCache::CreateRenderTarget(
   D3D12_RESOURCE_DESC resource_desc;
   resource_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
   resource_desc.Alignment = 0;
-  resource_desc.Width = key.GetWidth() * resolution_scale_x_;
+  resource_desc.Width = key.GetWidth() * draw_resolution_scale_x();
   resource_desc.Height =
       GetRenderTargetHeight(key.pitch_tiles_at_32bpp, key.msaa_samples) *
-      resolution_scale_y_;
+      draw_resolution_scale_y();
   resource_desc.DepthOrArraySize = 1;
   resource_desc.MipLevels = 1;
   if (key.is_depth) {
@@ -2139,7 +2094,7 @@ RenderTargetCache::RenderTarget* D3D12RenderTargetCache::CreateRenderTarget(
 bool D3D12RenderTargetCache::IsHostDepthEncodingDifferent(
     xenos::DepthRenderTargetFormat format) const {
   if (format == xenos::DepthRenderTargetFormat::kD24FS8) {
-    return depth_float24_conversion_ == DepthFloat24Conversion::kOnCopy;
+    return !depth_float24_convert_in_pixel_shader_;
   }
   return false;
 }
@@ -2943,10 +2898,10 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
                      kTransferSRVRegisterHostDepth));
   }
   a.OpDclInputPSSIV(dxbc::InterpolationMode::kLinearNoPerspective,
-                    dxbc::Dest::V(kInputRegisterPosition, 0b0011),
+                    dxbc::Dest::V1D(kInputRegisterPosition, 0b0011),
                     dxbc::Name::kPosition);
   if (key.dest_msaa_samples != xenos::MsaaSamples::k1X) {
-    a.OpDclInputPSSGV(dxbc::Dest::V(kInputRegisterSampleIndex, 0b0001),
+    a.OpDclInputPSSGV(dxbc::Dest::V1D(kInputRegisterSampleIndex, 0b0001),
                       dxbc::Name::kSampleIndex);
   }
   if (osgn_parameter_index_sv_target != UINT32_MAX) {
@@ -2963,69 +2918,32 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
   // for the coordinates for that load. Currently 3 temps are enough.
   a.OpDclTemps(3);
 
-  uint32_t tile_width_samples_scaled =
-      xenos::kEdramTileWidthSamples * resolution_scale_x_;
-  uint32_t tile_height_samples_scaled =
-      xenos::kEdramTileHeightSamples * resolution_scale_y_;
+  uint32_t draw_resolution_scale_x = this->draw_resolution_scale_x();
+  uint32_t draw_resolution_scale_y = this->draw_resolution_scale_y();
 
-  // Split the destination pixel index into 32bpp tile in r0.z and
+  uint32_t tile_width_samples =
+      xenos::kEdramTileWidthSamples * draw_resolution_scale_x;
+  uint32_t tile_height_samples =
+      xenos::kEdramTileHeightSamples * draw_resolution_scale_y;
+
+  // Split the destination pixel index into 32bpp tile in r0.zw and
   // 32bpp-tile-relative pixel index in r0.xy.
   // r0.xy = pixel XY as uint
-  a.OpFToU(dxbc::Dest::R(0, 0b0011), dxbc::Src::V(kInputRegisterPosition));
-  uint32_t dest_sample_width_log2 =
-      uint32_t(dest_is_64bpp) +
-      uint32_t(key.dest_msaa_samples >= xenos::MsaaSamples::k4X);
-  uint32_t dest_sample_height_log2 =
+  a.OpFToU(dxbc::Dest::R(0, 0b0011), dxbc::Src::V1D(kInputRegisterPosition));
+  uint32_t dest_tile_width_pixels =
+      tile_width_samples >>
+      (uint32_t(dest_is_64bpp) +
+       uint32_t(key.dest_msaa_samples >= xenos::MsaaSamples::k4X));
+  uint32_t dest_tile_height_pixels =
+      tile_height_samples >>
       uint32_t(key.dest_msaa_samples >= xenos::MsaaSamples::k2X);
-  uint32_t dest_tile_width_divide_scale, dest_tile_width_divide_upper_shift;
-  draw_util::GetEdramTileWidthDivideScaleAndUpperShift(
-      resolution_scale_x_, dest_tile_width_divide_scale,
-      dest_tile_width_divide_upper_shift);
-  assert_true(dest_tile_width_divide_upper_shift >= dest_sample_width_log2);
-  // Need the host tile size in pixels, not samples.
-  dest_tile_width_divide_upper_shift -= dest_sample_width_log2;
-  if (resolution_scale_y_ == 3) {
-    // r0.zw = upper 32 bits in the division process of pixel XY by pixel count
-    // in a 32bpp tile
-    a.OpUMul(dxbc::Dest::R(0, 0b1100), dxbc::Dest::Null(),
-             dxbc::Src::R(0, 0b0100 << 4),
-             dxbc::Src::LU(0, 0, dest_tile_width_divide_scale,
-                           draw_util::kDivideScale3));
-    // r0.zw = 32bpp tile XY index
-    a.OpUShR(dxbc::Dest::R(0, 0b1100), dxbc::Src::R(0),
-             dxbc::Src::LU(
-                 0, 0, dest_tile_width_divide_upper_shift,
-                 draw_util::kDivideUpperShift3 + 4 - dest_sample_height_log2));
-    // r0.xy = destination pixel XY index within the 32bpp tile
-    a.OpIMAd(
-        dxbc::Dest::R(0, 0b0011), dxbc::Src::R(0, 0b1110),
-        dxbc::Src::LI(
-            -int32_t((80 * resolution_scale_x_) >> dest_sample_width_log2),
-            -int32_t((16 * resolution_scale_y_) >> dest_sample_height_log2), 0,
-            0),
-        dxbc::Src::R(0, 0b0100));
-  } else {
-    assert_true(resolution_scale_y_ <= 2);
-    uint32_t dest_tile_height_pixels_log2 =
-        (resolution_scale_y_ == 2 ? 5 : 4) - dest_sample_height_log2;
-    // r0.z = upper 32 bits in the division process of pixel X by pixel count in
-    // a 32bpp tile
-    a.OpUMul(dxbc::Dest::R(0, 0b0100), dxbc::Dest::Null(),
-             dxbc::Src::R(0, dxbc::Src::kXXXX),
-             dxbc::Src::LU(dest_tile_width_divide_scale));
-    // r0.zw = 32bpp tile XY index
-    a.OpUShR(dxbc::Dest::R(0, 0b1100), dxbc::Src::R(0, 0b0110 << 4),
-             dxbc::Src::LU(0, 0, dest_tile_width_divide_upper_shift,
-                           dest_tile_height_pixels_log2));
-    // r0.x = destination pixel X index within the 32bpp tile
-    a.OpIMAd(dxbc::Dest::R(0, 0b0001), dxbc::Src::R(0, dxbc::Src::kZZZZ),
-             dxbc::Src::LI(-int32_t((80 * resolution_scale_x_) >>
-                                    dest_sample_width_log2)),
-             dxbc::Src::R(0, dxbc::Src::kXXXX));
-    // r0.y = destination pixel Y index within the 32bpp tile
-    a.OpAnd(dxbc::Dest::R(0, 0b0010), dxbc::Src::R(0, dxbc::Src::kYYYY),
-            dxbc::Src::LU((1 << dest_tile_height_pixels_log2) - 1));
-  }
+  // r0.xy = destination pixel XY index within the 32bpp tile
+  // r0.zw = 32bpp tile XY index
+  a.OpUDiv(dxbc::Dest::R(0, 0b1100), dxbc::Dest::R(0, 0b0011),
+           dxbc::Src::R(0, 0b01000100),
+           dxbc::Src::LU(dest_tile_width_pixels, dest_tile_height_pixels,
+                         dest_tile_width_pixels, dest_tile_height_pixels));
+
   // r1.x = destination pitch in 32bpp tiles
   a.OpUBFE(dxbc::Dest::R(1, 0b0001), dxbc::Src::LU(xenos::kEdramPitchTilesBits),
            dxbc::Src::LU(0),
@@ -3057,7 +2975,7 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
   // If 64bpp -> 32bpp, also the needed half in r0.w.
 
   dxbc::Src dest_sample(
-      dxbc::Src::V(kInputRegisterSampleIndex, dxbc::Src::kXXXX));
+      dxbc::Src::V1D(kInputRegisterSampleIndex, dxbc::Src::kXXXX));
   dxbc::Src source_sample(dest_sample);
   uint32_t source_tile_pixel_x_reg = 0;
   uint32_t source_tile_pixel_y_reg = 0;
@@ -3086,7 +3004,7 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
         source_sample = dxbc::Src::R(1, dxbc::Src::kZZZZ);
         a.OpBFI(dxbc::Dest::R(1, 0b0001), dxbc::Src::LU(31), dxbc::Src::LU(1),
                 dxbc::Src::R(0, dxbc::Src::kXXXX),
-                dxbc::Src::V(kInputRegisterSampleIndex, dxbc::Src::kXXXX));
+                dxbc::Src::V1D(kInputRegisterSampleIndex, dxbc::Src::kXXXX));
         source_tile_pixel_x_reg = 1;
       } else if (key.dest_msaa_samples == xenos::MsaaSamples::k2X) {
         // 32bpp -> 64bpp, 4x -> 2x.
@@ -3128,7 +3046,7 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
         a.OpIShL(dxbc::Dest::R(1, 0b0001), dxbc::Src::R(0, dxbc::Src::kXXXX),
                  dxbc::Src::LU(2));
         a.OpBFI(dxbc::Dest::R(1, 0b0001), dxbc::Src::LU(1), dxbc::Src::LU(1),
-                dxbc::Src::V(kInputRegisterSampleIndex, dxbc::Src::kXXXX),
+                dxbc::Src::V1D(kInputRegisterSampleIndex, dxbc::Src::kXXXX),
                 dxbc::Src::R(1, dxbc::Src::kXXXX));
         source_tile_pixel_x_reg = 1;
         // Y is handled by common code.
@@ -3346,7 +3264,7 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
     // Copying between color and depth / stencil - swap 40-32bpp-sample columns
     // in the pixel index within the source 32bpp tile using r1.w as temporary.
     uint32_t source_32bpp_tile_half_pixels =
-        tile_width_samples_scaled >> (1 + source_pixel_width_dwords_log2);
+        tile_width_samples >> (1 + source_pixel_width_dwords_log2);
     a.OpULT(dxbc::Dest::R(1, 0b1000),
             dxbc::Src::R(source_tile_pixel_x_reg, dxbc::Src::kXXXX),
             dxbc::Src::LU(source_32bpp_tile_half_pixels));
@@ -3369,13 +3287,19 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
 
   // Apply the source 32bpp tile index.
   // r1.w = destination to source EDRAM tile adjustment
-  a.OpIBFE(dxbc::Dest::R(1, 0b1000), dxbc::Src::LU(xenos::kEdramBaseTilesBits),
+  a.OpIBFE(dxbc::Dest::R(1, 0b1000),
+           dxbc::Src::LU(xenos::kEdramBaseTilesBits + 1),
            dxbc::Src::LU(xenos::kEdramPitchTilesBits * 2),
            dxbc::Src::CB(cbuffer_index_address, kTransferCBVRegisterAddress, 0,
                          dxbc::Src::kXXXX));
-  // r1.w = 32bpp tile index within the source
+  // r1.w = 32bpp tile index within the source, or the tile index within the
+  //        source minus the EDRAM tile count if transferring across addressing
+  //        wrapping (if negative)
   a.OpIAdd(dxbc::Dest::R(1, 0b1000), dxbc::Src::R(0, dxbc::Src::kZZZZ),
            dxbc::Src::R(1, dxbc::Src::kWWWW));
+  // r1.w = 32bpp tile index within the source
+  a.OpAnd(dxbc::Dest::R(1, 0b1000), dxbc::Src::R(1, dxbc::Src::kWWWW),
+          dxbc::Src::LU(xenos::kEdramTileCount - 1));
   // r2.x = source pitch in 32bpp tiles
   a.OpUBFE(dxbc::Dest::R(2, 0b0001), dxbc::Src::LU(xenos::kEdramPitchTilesBits),
            dxbc::Src::LU(xenos::kEdramPitchTilesBits),
@@ -3389,18 +3313,17 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
   // r1.x = pixel X within the source texture
   // r2.x = free
   a.OpUMAd(dxbc::Dest::R(1, 0b0001),
-           dxbc::Src::LU(tile_width_samples_scaled >>
-                         source_pixel_width_dwords_log2),
+           dxbc::Src::LU(tile_width_samples >> source_pixel_width_dwords_log2),
            dxbc::Src::R(2, dxbc::Src::kXXXX),
            dxbc::Src::R(source_tile_pixel_x_reg, dxbc::Src::kXXXX));
   // r1.y = pixel Y within the source texture
   // r1.w = free
-  a.OpUMAd(dxbc::Dest::R(1, 0b0010),
-           dxbc::Src::LU(
-               tile_height_samples_scaled >>
-               uint32_t(key.source_msaa_samples >= xenos::MsaaSamples::k2X)),
-           dxbc::Src::R(1, dxbc::Src::kWWWW),
-           dxbc::Src::R(source_tile_pixel_y_reg, dxbc::Src::kYYYY));
+  a.OpUMAd(
+      dxbc::Dest::R(1, 0b0010),
+      dxbc::Src::LU(tile_height_samples >> uint32_t(key.source_msaa_samples >=
+                                                    xenos::MsaaSamples::k2X)),
+      dxbc::Src::R(1, dxbc::Src::kWWWW),
+      dxbc::Src::R(source_tile_pixel_y_reg, dxbc::Src::kYYYY));
 
   // Load the source to r1, or, for 32bpp | 32bpp -> 64bpp, the first dword to
   // r0 since addressing will not be needed anymore for color, and the second
@@ -3616,9 +3539,9 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
       for (uint32_t i = 0; i < 2; ++i) {
         switch (source_depth_format) {
           case xenos::DepthRenderTargetFormat::kD24S8: {
-            // Round to the nearest even integer. This seems to be the correct,
-            // adding +0.5 and rounding towards zero results in red instead of
-            // black in the 4D5307E6 clear shader.
+            // Round to the nearest even integer. This seems to be the correct
+            // conversion, adding +0.5 and rounding towards zero results in red
+            // instead of black in the 4D5307E6 clear shader.
             a.OpMul(dxbc::Dest::R(i, 0b1000), dxbc::Src::R(i, dxbc::Src::kWWWW),
                     dxbc::Src::LF(float(0xFFFFFF)));
             a.OpRoundNE(dxbc::Dest::R(i, 0b1000),
@@ -3628,8 +3551,13 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
           } break;
           case xenos::DepthRenderTargetFormat::kD24FS8: {
             // Convert using r1.y as temporary.
-            DxbcShaderTranslator::PreClampedDepthTo20e4(a, i, 3, i, 3, 1, 1,
-                                                        true);
+            // When converting the depth in pixel shaders, it's always exact,
+            // truncating not to insert additional rounding instructions.
+            DxbcShaderTranslator::PreClampedDepthTo20e4(
+                a, i, 3, i, 3, 1, 1,
+                !depth_float24_convert_in_pixel_shader() &&
+                    depth_float24_round(),
+                true);
           } break;
         }
         // Merge depth and stencil into r0/r1.x.
@@ -3803,9 +3731,9 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
         depth_loaded_in_guest_format = true;
         switch (source_depth_format) {
           case xenos::DepthRenderTargetFormat::kD24S8: {
-            // Round to the nearest even integer. This seems to be the correct,
-            // adding +0.5 and rounding towards zero results in red instead of
-            // black in the 4D5307E6 clear shader.
+            // Round to the nearest even integer. This seems to be the correct
+            // conversion, adding +0.5 and rounding towards zero results in red
+            // instead of black in the 4D5307E6 clear shader.
             a.OpMul(dxbc::Dest::R(1, 0b1000), dxbc::Src::R(1, dxbc::Src::kWWWW),
                     dxbc::Src::LF(float(0xFFFFFF)));
             a.OpRoundNE(dxbc::Dest::R(1, 0b1000),
@@ -3815,8 +3743,13 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
           } break;
           case xenos::DepthRenderTargetFormat::kD24FS8: {
             // Convert using r1.y as temporary.
-            DxbcShaderTranslator::PreClampedDepthTo20e4(a, 1, 3, 1, 3, 1, 1,
-                                                        true);
+            // When converting the depth in pixel shaders, it's always exact,
+            // truncating not to insert additional rounding instructions.
+            DxbcShaderTranslator::PreClampedDepthTo20e4(
+                a, 1, 3, 1, 3, 1, 1,
+                !depth_float24_convert_in_pixel_shader() &&
+                    depth_float24_round(),
+                true);
           } break;
         }
         if (dest_is_color) {
@@ -3960,13 +3893,15 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
               }
               // Combine the tile sample index and the tile index into buffer
               // address to r0.x.
+              // The tile index doesn't need to be wrapped, as the host depth is
+              // written to the beginning of the buffer, without the base
+              // offset.
               a.OpUMAd(dxbc::Dest::R(0, 0b0001),
-                       dxbc::Src::LU(tile_width_samples_scaled),
+                       dxbc::Src::LU(tile_width_samples),
                        dxbc::Src::R(0, dxbc::Src::kYYYY),
                        dxbc::Src::R(0, dxbc::Src::kXXXX));
               a.OpUMAd(dxbc::Dest::R(0, 0b0001),
-                       dxbc::Src::LU(tile_width_samples_scaled *
-                                     tile_height_samples_scaled),
+                       dxbc::Src::LU(tile_width_samples * tile_height_samples),
                        dxbc::Src::R(0, dxbc::Src::kZZZZ),
                        dxbc::Src::R(0, dxbc::Src::kXXXX));
               // Load from the buffer.
@@ -3980,16 +3915,23 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
               // source.
               // r0.w = destination to host depth source EDRAM tile adjustment
               a.OpIBFE(dxbc::Dest::R(0, 0b1000),
-                       dxbc::Src::LU(xenos::kEdramBaseTilesBits),
+                       dxbc::Src::LU(xenos::kEdramBaseTilesBits + 1),
                        dxbc::Src::LU(xenos::kEdramPitchTilesBits * 2),
                        dxbc::Src::CB(cbuffer_index_host_depth_address,
                                      kTransferCBVRegisterHostDepthAddress, 0,
                                      dxbc::Src::kXXXX));
-              // r0.z = tile index relative to the host depth source base
+              // r0.z = tile index relative to the host depth source base, or
+              //        the tile index within the host depth source minus the
+              //        EDRAM tile count if transferring across addressing
+              //        wrapping (if negative)
               // r0.w = free
               a.OpIAdd(dxbc::Dest::R(0, 0b0100),
                        dxbc::Src::R(0, dxbc::Src::kZZZZ),
                        dxbc::Src::R(0, dxbc::Src::kWWWW));
+              // r0.z = tile index relative to the host depth source base
+              a.OpAnd(dxbc::Dest::R(0, 0b0100),
+                      dxbc::Src::R(0, dxbc::Src::kZZZZ),
+                      dxbc::Src::LU(xenos::kEdramTileCount - 1));
               // Convert position and sample index from within the destination
               // tile to within the host depth source tile, like for the guest
               // render target, but for 32bpp -> 32bpp only.
@@ -4143,7 +4085,7 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
               // r1.x = free
               a.OpUMAd(
                   dxbc::Dest::R(0, 0b0001),
-                  dxbc::Src::LU(tile_width_samples_scaled >>
+                  dxbc::Src::LU(tile_width_samples >>
                                 uint32_t(key.host_depth_source_msaa_samples >=
                                          xenos::MsaaSamples::k4X)),
                   dxbc::Src::R(1, dxbc::Src::kXXXX),
@@ -4152,7 +4094,7 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
               // r0.z = free
               a.OpUMAd(
                   dxbc::Dest::R(0, 0b0010),
-                  dxbc::Src::LU(tile_height_samples_scaled >>
+                  dxbc::Src::LU(tile_height_samples >>
                                 uint32_t(key.host_depth_source_msaa_samples >=
                                          xenos::MsaaSamples::k2X)),
                   dxbc::Src::R(0, dxbc::Src::kZZZZ),
@@ -4192,8 +4134,14 @@ D3D12RenderTargetCache::GetOrCreateTransferPipelines(TransferShaderKey key) {
                          dxbc::Src::R(0, dxbc::Src::kYYYY));
               } break;
               case xenos::DepthRenderTargetFormat::kD24FS8: {
-                DxbcShaderTranslator::PreClampedDepthTo20e4(a, 0, 1, 0, 0, 0, 2,
-                                                            true);
+                // When converting the depth in pixel shaders, it's always
+                // exact, truncating not to insert additional rounding
+                // instructions.
+                DxbcShaderTranslator::PreClampedDepthTo20e4(
+                    a, 0, 1, 0, 0, 0, 2,
+                    !depth_float24_convert_in_pixel_shader() &&
+                        depth_float24_round(),
+                    true);
               } break;
             }
             a.OpIEq(dxbc::Dest::R(0, 0b0010), dxbc::Src::R(0, dxbc::Src::kYYYY),
@@ -4518,15 +4466,15 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
     // Assuming the rectangle is already clamped by the setup function from the
     // common render target cache.
     clear_rect.left =
-        LONG(resolve_clear_rectangle->x_pixels * resolution_scale_x_);
+        LONG(resolve_clear_rectangle->x_pixels * draw_resolution_scale_x());
     clear_rect.top =
-        LONG(resolve_clear_rectangle->y_pixels * resolution_scale_y_);
+        LONG(resolve_clear_rectangle->y_pixels * draw_resolution_scale_y());
     clear_rect.right = LONG((resolve_clear_rectangle->x_pixels +
                              resolve_clear_rectangle->width_pixels) *
-                            resolution_scale_x_);
+                            draw_resolution_scale_x());
     clear_rect.bottom = LONG((resolve_clear_rectangle->y_pixels +
                               resolve_clear_rectangle->height_pixels) *
-                             resolution_scale_y_);
+                             draw_resolution_scale_y());
   }
 
   // Do host depth storing for the depth destination (assuming there can be only
@@ -4811,8 +4759,8 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
   bool transfer_viewport_set = false;
   float pixels_to_ndc_unscaled =
       2.0f / float(D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION);
-  float pixels_to_ndc_x = pixels_to_ndc_unscaled * resolution_scale_x_;
-  float pixels_to_ndc_y = pixels_to_ndc_unscaled * resolution_scale_y_;
+  float pixels_to_ndc_x = pixels_to_ndc_unscaled * draw_resolution_scale_x();
+  float pixels_to_ndc_y = pixels_to_ndc_unscaled * draw_resolution_scale_y();
 
   TransferRootSignatureIndex last_transfer_root_signature_index =
       TransferRootSignatureIndex::kCount;
@@ -4988,18 +4936,18 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
                ++j) {
             const Transfer::Rectangle& stencil_clear_rectangle =
                 transfer_stencil_clear_rectangles[j];
-            stencil_clear_rect_write_ptr->left =
-                LONG(stencil_clear_rectangle.x_pixels * resolution_scale_x_);
-            stencil_clear_rect_write_ptr->top =
-                LONG(stencil_clear_rectangle.y_pixels * resolution_scale_y_);
+            stencil_clear_rect_write_ptr->left = LONG(
+                stencil_clear_rectangle.x_pixels * draw_resolution_scale_x());
+            stencil_clear_rect_write_ptr->top = LONG(
+                stencil_clear_rectangle.y_pixels * draw_resolution_scale_y());
             stencil_clear_rect_write_ptr->right =
                 LONG((stencil_clear_rectangle.x_pixels +
                       stencil_clear_rectangle.width_pixels) *
-                     resolution_scale_x_);
+                     draw_resolution_scale_x());
             stencil_clear_rect_write_ptr->bottom =
                 LONG((stencil_clear_rectangle.y_pixels +
                       stencil_clear_rectangle.height_pixels) *
-                     resolution_scale_y_);
+                     draw_resolution_scale_y());
             ++stencil_clear_rect_write_ptr;
           }
         }
@@ -5967,131 +5915,93 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
   // fits in it, while 80x16 doesn't.
   a.OpDclThreadGroup(40, 16, 1);
 
+  uint32_t draw_resolution_scale_x = this->draw_resolution_scale_x();
+  uint32_t draw_resolution_scale_y = this->draw_resolution_scale_y();
+
   // For now, as the exact addressing in 64bpp render targets relatively to
   // 32bpp is unknown, treating 64bpp tiles as storing 40x16 samples rather than
   // 80x16 for simplicity of addressing into the texture.
 
-  // Get the parts of the address along Y - tile row index within the dispatch
-  // to r0.w, sample Y within the tile to r0.y.
-  if (resolution_scale_y_ == 3) {
-    // Multiplication part of the division by the (16 * scale) tile height,
-    // specifically 48 here, or 16 * 3.
-    // r0.w = (Y * kDivideScale3) >> 32
-    a.OpUMul(dxbc::Dest::R(0, 0b1000), dxbc::Dest::Null(),
-             dxbc::Src::VThreadID(dxbc::Src::kYYYY),
-             dxbc::Src::LU(draw_util::kDivideScale3));
-    // Shift part of the division by 16 * scale.
-    // r0.w = Y tile position
-    a.OpUShR(dxbc::Dest::R(0, 0b1000), dxbc::Src::R(0, dxbc::Src::kWWWW),
-             dxbc::Src::LU(draw_util::kDivideUpperShift3 + 4));
-    // Take the remainder of the performed division to r0.y.
-    // r0.y = Y sample position within the tile
-    // r0.w = Y tile position
-    a.OpIMAd(dxbc::Dest::R(0, 0b0010), dxbc::Src::R(0, dxbc::Src::kWWWW),
-             dxbc::Src::LI(-16 * resolution_scale_y_),
-             dxbc::Src::VThreadID(dxbc::Src::kYYYY));
-  } else {
-    assert_true(resolution_scale_y_ <= 2);
-    // Tile height is a power of two, can use bit operations.
-    // Get the tile row index into r0.w.
-    // r0.w = Y tile position.
-    a.OpUShR(dxbc::Dest::R(0, 0b1000), dxbc::Src::VThreadID(dxbc::Src::kYYYY),
-             dxbc::Src::LU(resolution_scale_y_ == 2 ? 5 : 4));
-    // Get the Y sample position within the tile into r0.y.
-    // r0.y = Y sample position within the tile
-    // r0.w = Y tile position
-    a.OpAnd(dxbc::Dest::R(0, 0b0010), dxbc::Src::VThreadID(dxbc::Src::kYYYY),
-            dxbc::Src::LU((16 * resolution_scale_y_) - 1));
-  }
+  uint32_t tile_width =
+      (xenos::kEdramTileWidthSamples * draw_resolution_scale_x) >>
+      uint32_t(format_is_64bpp);
+  uint32_t tile_height =
+      xenos::kEdramTileHeightSamples * draw_resolution_scale_y;
 
-  // Get the X tile offset within the dispatch to r0.z.
-  uint32_t tile_width = xenos::kEdramTileWidthSamples * resolution_scale_x_;
-  uint32_t tile_width_divide_scale;
-  uint32_t tile_width_divide_upper_shift;
-  draw_util::GetEdramTileWidthDivideScaleAndUpperShift(
-      resolution_scale_x_, tile_width_divide_scale,
-      tile_width_divide_upper_shift);
-  if (format_is_64bpp) {
-    tile_width >>= 1;
-    assert_not_zero(tile_width_divide_upper_shift);
-    --tile_width_divide_upper_shift;
-  }
-  // Multiplication part of the division by 80|40 * scale.
-  // r0.y = Y sample position within the tile
-  // r0.z = (X * tile_width_divide_scale) >> 32
-  // r0.w = Y tile position
-  a.OpUMul(dxbc::Dest::R(0, 0b0100), dxbc::Dest::Null(),
-           dxbc::Src::VThreadID(dxbc::Src::kXXXX),
-           dxbc::Src::LU(tile_width_divide_scale));
-  // Shift part of the division by 80|40 * scale.
+  // Get the parts of the address - tile row index within the dispatch to r0.zw,
+  // sample Y within the tile to r0.xy.
+  // r0.x = X sample position within the tile
   // r0.y = Y sample position within the tile
   // r0.z = X tile position
   // r0.w = Y tile position
-  a.OpUShR(dxbc::Dest::R(0, 0b0100), dxbc::Src::R(0, dxbc::Src::kZZZZ),
-           dxbc::Src::LU(tile_width_divide_upper_shift));
+  a.OpUDiv(dxbc::Dest::R(0, 0b1100), dxbc::Dest::R(0, 0b0011),
+           dxbc::Src::VThreadID(0b01000100),
+           dxbc::Src::LU(tile_width, tile_height, tile_width, tile_height));
 
-  // Extract the dump rectangle tile row pitch to r0.x.
-  // r0.x = dump rectangle pitch in tiles
+  // Extract the dump rectangle tile row pitch to r1.x.
+  // r0.x = X sample position within the tile
   // r0.y = Y sample position within the tile
   // r0.z = X tile position
   // r0.w = Y tile position
-  a.OpUBFE(dxbc::Dest::R(0, 0b0001), dxbc::Src::LU(xenos::kEdramPitchTilesBits),
+  // r1.x = dump rectangle pitch in tiles
+  a.OpUBFE(dxbc::Dest::R(1, 0b0001), dxbc::Src::LU(xenos::kEdramPitchTilesBits),
            dxbc::Src::LU(0),
            dxbc::Src::CB(kDumpCbufferPitches, kDumpCbufferPitches, 0,
                          dxbc::Src::kXXXX));
   // Get the tile index in the EDRAM relative to the dump rectangle base tile to
   // r0.w.
-  // r0.x = free
-  // r0.y = Y sample position within the tile
-  // r0.z = X tile position
-  // r0.w = tile index relative to the dump rectangle base
-  a.OpUMAd(dxbc::Dest::R(0, 0b1000), dxbc::Src::R(0, dxbc::Src::kWWWW),
-           dxbc::Src::R(0, dxbc::Src::kXXXX),
-           dxbc::Src::R(0, dxbc::Src::kZZZZ));
-
-  // Take the X sample index within the tile as the remainder of the division of
-  // the thread index by tile width to r0.x.
   // r0.x = X sample position within the tile
   // r0.y = Y sample position within the tile
   // r0.z = free
   // r0.w = tile index relative to the dump rectangle base
-  a.OpIMAd(dxbc::Dest::R(0, 0b0001), dxbc::Src::R(0, dxbc::Src::kZZZZ),
-           dxbc::Src::LI(-int32_t(tile_width)),
-           dxbc::Src::VThreadID(dxbc::Src::kXXXX));
+  // r1.x = free
+  a.OpUMAd(dxbc::Dest::R(0, 0b1000), dxbc::Src::R(0, dxbc::Src::kWWWW),
+           dxbc::Src::R(1, dxbc::Src::kXXXX),
+           dxbc::Src::R(0, dxbc::Src::kZZZZ));
 
-  // Extract the index of the first tile of the dispatch in the EDRAM to r0.z.
+  // Extract the index of the first tile (taking EDRAM addressing wrapping into
+  // account) of the dispatch in the EDRAM to r0.z.
   // r0.x = X sample position within the tile
   // r0.y = Y sample position within the tile
   // r0.z = first EDRAM tile index in the dispatch
   // r0.w = tile index relative to the dump rectangle base
-  a.OpUBFE(dxbc::Dest::R(0, 0b0100), dxbc::Src::LU(xenos::kEdramBaseTilesBits),
-           dxbc::Src::LU(0),
+  a.OpUBFE(dxbc::Dest::R(0, 0b0100),
+           dxbc::Src::LU(xenos::kEdramBaseTilesBits + 1), dxbc::Src::LU(0),
            dxbc::Src::CB(kDumpCbufferOffsets, kDumpCbufferOffsets, 0,
                          dxbc::Src::kXXXX));
-  // Add the base tile in the dispatch to the dispatch-local tile index to r0.w.
+  // Add the base tile in the dispatch to the dispatch-local tile index to r0.w,
+  // not wrapping yet so in case of a wraparound, the address relative to the
+  // base in the texture after subtraction of the base won't be negative.
   // r0.x = X sample position within the tile
   // r0.y = Y sample position within the tile
   // r0.z = free
-  // r0.w = tile index in the EDRAM
+  // r0.w = non-wrapped tile index in the EDRAM
   a.OpIAdd(dxbc::Dest::R(0, 0b1000), dxbc::Src::R(0, dxbc::Src::kWWWW),
            dxbc::Src::R(0, dxbc::Src::kZZZZ));
+  // Wrap the address of the tile in the EDRAM to r0.z.
+  // r0.x = X sample position within the tile
+  // r0.y = Y sample position within the tile
+  // r0.z = wrapped tile index in the EDRAM
+  // r0.w = non-wrapped tile index in the EDRAM
+  a.OpAnd(dxbc::Dest::R(0, 0b0100), dxbc::Src::R(0, dxbc::Src::kWWWW),
+          dxbc::Src::LU(xenos::kEdramTileCount - 1));
   // Convert the tile index to samples and add the X sample index to it to r0.z.
   // r0.x = X sample position within the tile
   // r0.y = Y sample position within the tile
   // r0.z = tile sample offset in the EDRAM plus X sample offset
-  // r0.w = tile index in the EDRAM
-  a.OpUMAd(dxbc::Dest::R(0, 0b0100), dxbc::Src::R(0, dxbc::Src::kWWWW),
+  // r0.w = non-wrapped tile index in the EDRAM
+  a.OpUMAd(dxbc::Dest::R(0, 0b0100), dxbc::Src::R(0, dxbc::Src::kZZZZ),
            dxbc::Src::LU(
-               resolution_scale_x_ * resolution_scale_y_ *
+               draw_resolution_scale_x * draw_resolution_scale_y *
                (xenos::kEdramTileWidthSamples >> uint32_t(format_is_64bpp)) *
                xenos::kEdramTileHeightSamples),
            dxbc::Src::R(0, dxbc::Src::kXXXX));
   // Add the contribution of the Y sample position within the tile to the sample
-  // address in the EDRAM to r0.w.
+  // address in the EDRAM to r0.z.
   // r0.x = X sample position within the tile
   // r0.y = Y sample position within the tile
   // r0.z = sample offset in the EDRAM without the depth column swapping
-  // r0.w = tile index in the EDRAM
+  // r0.w = non-wrapped tile index in the EDRAM
   a.OpUMAd(dxbc::Dest::R(0, 0b0100), dxbc::Src::R(0, dxbc::Src::kYYYY),
            dxbc::Src::LU(tile_width), dxbc::Src::R(0, dxbc::Src::kZZZZ));
   if (key.is_depth) {
@@ -6100,7 +6010,7 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
     // r0.x = X sample position within the tile
     // r0.y = Y sample position within the tile
     // r0.z = sample offset in the EDRAM without the depth column swapping
-    // r0.w = tile index in the EDRAM
+    // r0.w = non-wrapped tile index in the EDRAM
     // r1.x = 0xFFFFFFFF if in the right 40-sample half, 0 otherwise
     a.OpUGE(dxbc::Dest::R(1, 0b0001), dxbc::Src::R(0, dxbc::Src::kXXXX),
             dxbc::Src::LU(tile_width_half));
@@ -6108,7 +6018,7 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
     // r0.x = X sample position within the tile
     // r0.y = Y sample position within the tile
     // r0.z = sample offset in the EDRAM without the depth column swapping
-    // r0.w = tile index in the EDRAM
+    // r0.w = non-wrapped tile index in the EDRAM
     // r1.x = depth half-tile flipping offset
     a.OpMovC(dxbc::Dest::R(1, 0b0001), dxbc::Src::R(1, dxbc::Src::kXXXX),
              dxbc::Src::LI(-int32_t(tile_width_half)),
@@ -6118,7 +6028,7 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
     // r0.x = X sample position within the tile
     // r0.y = Y sample position within the tile
     // r0.z = sample offset in the EDRAM
-    // r0.w = tile index in the EDRAM
+    // r0.w = non-wrapped tile index in the EDRAM
     // r1.x = free
     a.OpIAdd(dxbc::Dest::R(0, 0b0100), dxbc::Src::R(0, dxbc::Src::kZZZZ),
              dxbc::Src::R(1, dxbc::Src::kXXXX));
@@ -6128,10 +6038,10 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
   // r0.x = X sample position within the tile
   // r0.y = Y sample position within the tile
   // r0.z = sample offset in the EDRAM
-  // r0.w = tile index in the EDRAM
+  // r0.w = non-wrapped tile index in the EDRAM
   // r1.x = source texture base tile index
   a.OpUBFE(dxbc::Dest::R(1, 0b0001), dxbc::Src::LU(xenos::kEdramBaseTilesBits),
-           dxbc::Src::LU(xenos::kEdramBaseTilesBits),
+           dxbc::Src::LU(xenos::kEdramBaseTilesBits + 1),
            dxbc::Src::CB(kDumpCbufferOffsets, kDumpCbufferOffsets, 0,
                          dxbc::Src::kXXXX));
   // Get the linear tile index within the source texture to r0.w.
@@ -6153,7 +6063,6 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
            dxbc::Src::CB(kDumpCbufferPitches, kDumpCbufferPitches, 0,
                          dxbc::Src::kXXXX));
   // Split the linear tile index in the source texture into X and Y in tiles.
-  // Get the source texture pitch in tiles to r1.x.
   // r0.x = X sample position within the tile
   // r0.y = Y sample position within the tile
   // r0.z = sample offset in the EDRAM
@@ -6177,9 +6086,10 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
   // r0.y = Y sample position within the source texture
   // r0.z = sample offset in the EDRAM
   // r1.x = free
-  a.OpUMAd(dxbc::Dest::R(0, 0b0010), dxbc::Src::R(1, dxbc::Src::kXXXX),
-           dxbc::Src::LU(xenos::kEdramTileHeightSamples * resolution_scale_y_),
-           dxbc::Src::R(0, dxbc::Src::kYYYY));
+  a.OpUMAd(
+      dxbc::Dest::R(0, 0b0010), dxbc::Src::R(1, dxbc::Src::kXXXX),
+      dxbc::Src::LU(xenos::kEdramTileHeightSamples * draw_resolution_scale_y),
+      dxbc::Src::R(0, dxbc::Src::kYYYY));
   // Will be using the source texture coordinates from r0.xy, and for
   // single-sampled source, LOD from r0.w.
   dxbc::Src source_address_src(dxbc::Src::R(0, 0b11000100));
@@ -6290,9 +6200,9 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
   if (key.is_depth) {
     switch (key.GetDepthFormat()) {
       case xenos::DepthRenderTargetFormat::kD24S8:
-        // Round to the nearest even integer. This seems to be the correct,
-        // adding +0.5 and rounding towards zero results in red instead of
-        // black in the 4D5307E6 clear shader.
+        // Round to the nearest even integer. This seems to be the correct
+        // conversion, adding +0.5 and rounding towards zero results in red
+        // instead of black in the 4D5307E6 clear shader.
         a.OpMul(dxbc::Dest::R(1, 0b0001), dxbc::Src::R(1, dxbc::Src::kXXXX),
                 dxbc::Src::LF(float(0xFFFFFF)));
         a.OpRoundNE(dxbc::Dest::R(1, 0b0001),
@@ -6302,7 +6212,12 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(
       case xenos::DepthRenderTargetFormat::kD24FS8:
         // Convert to [0, 2) float24 from [0, 1) float32, using r0.x as
         // temporary.
-        DxbcShaderTranslator::PreClampedDepthTo20e4(a, 1, 0, 1, 0, 0, 0, true);
+        // When converting the depth in pixel shaders, it's always exact,
+        // truncating not to insert additional rounding instructions.
+        DxbcShaderTranslator::PreClampedDepthTo20e4(
+            a, 1, 0, 1, 0, 0, 0,
+            !depth_float24_convert_in_pixel_shader() && depth_float24_round(),
+            true);
         break;
     }
     // Combine 24-bit depth and stencil into r1.x.
@@ -6708,9 +6623,10 @@ void D3D12RenderTargetCache::DumpRenderTargets(uint32_t dump_base,
       command_processor_.SubmitBarriers();
       // Processing 40 x 16 x scale samples per dispatch (a 32bpp tile in two
       // dispatches at 1x1 scale, 64bpp in one dispatch).
-      command_list.D3DDispatch((dispatch.width_tiles * resolution_scale_x_)
-                                   << uint32_t(!format_is_64bpp),
-                               dispatch.height_tiles * resolution_scale_y_, 1);
+      command_list.D3DDispatch(
+          (dispatch.width_tiles * draw_resolution_scale_x())
+              << uint32_t(!format_is_64bpp),
+          dispatch.height_tiles * draw_resolution_scale_y(), 1);
     }
     MarkEdramBufferModified();
   }

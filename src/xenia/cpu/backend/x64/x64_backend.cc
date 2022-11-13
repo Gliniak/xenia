@@ -42,6 +42,7 @@ DEFINE_int32(x64_extension_mask, -1,
              "  512 = AVX512VL\n"
              " 1024 = AVX512BW\n"
              " 2048 = AVX512DQ\n"
+             " 4096 = AVX512VBMI\n"
              "   -1 = Detect and utilize all possible processor features\n",
              "x64");
 
@@ -163,7 +164,7 @@ std::unique_ptr<GuestFunction> X64Backend::CreateGuestFunction(
   return std::make_unique<X64Function>(module, address);
 }
 
-uint64_t ReadCapstoneReg(X64Context* context, x86_reg reg) {
+uint64_t ReadCapstoneReg(HostThreadContext* context, x86_reg reg) {
   switch (reg) {
     case X86_REG_RAX:
       return context->rax;

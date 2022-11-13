@@ -130,16 +130,16 @@ union alignas(uint32_t) SQ_CONTEXT_MISC {
     uint32_t sc_output_screen_xy : 1;         // +1
     xenos::SampleControl sc_sample_cntl : 2;  // +2
     uint32_t : 4;                             // +4
-    // Pixel shader interpolator (according to the XNA microcode compiler -
+    // Pixel shader interpolator (according to the XNA microcode validator -
     // limited to the interpolator count, 16, not the total register count of
     // 64) index to write pixel parameters to.
     // See https://portal.unifiedpatents.com/ptab/case/IPR2015-00325 Exhibit
     // 2039 R400 Sequencer Specification 2.11 (a significantly early version of
     // the specification, however) section 19.2 "Sprites/ XY screen coordinates/
     // FB information" for additional details.
-    // * |XY| - position on screen (vPos - the XNA microcode compiler translates
-    //   ps_3_0 vPos directly to this, so at least in Direct3D 9 pixel center
-    //   mode, this contains 0, 1, 2, not 0.5, 1.5, 2.5). flto also said in the
+    // * |XY| - position on screen (vPos - the XNA assembler translates ps_3_0
+    //   vPos directly to this, so at least in Direct3D 9 pixel center mode,
+    //   this contains 0, 1, 2, not 0.5, 1.5, 2.5). flto also said in the
     //   Freedreno IRC that it's .0 even in OpenGL:
     //   https://dri.freedesktop.org/~cbrill/dri-log/?channel=freedreno&date=2020-04-19
     //   According to the actual usage, in the final version of the hardware,
@@ -509,6 +509,9 @@ union alignas(uint32_t) PA_CL_CLIP_CNTL {
     uint32_t z_nan_retain : 1;            // +23
     uint32_t w_nan_retain : 1;            // +24
   };
+  struct {
+    uint32_t ucp_ena : 6;
+  };
   static constexpr Register register_index = XE_GPU_REG_PA_CL_CLIP_CNTL;
 };
 static_assert_size(PA_CL_CLIP_CNTL, sizeof(uint32_t));
@@ -681,7 +684,11 @@ static_assert_size(RB_COLORCONTROL, sizeof(uint32_t));
 union alignas(uint32_t) RB_COLOR_INFO {
   uint32_t value;
   struct {
-    uint32_t color_base : 12;                         // +0 in tiles.
+    // The original R400 structure has 12-bit color_base, however the Xenos has
+    // periodic 11-bit EDRAM tile addressing, so this field was split in Xenia
+    // for convenience and to avoid mistakes.
+    uint32_t color_base : 11;                         // +0 in tiles.
+    uint32_t color_base_bit_11 : 1;                   // +11
     uint32_t : 4;                                     // +12
     xenos::ColorRenderTargetFormat color_format : 4;  // +16
     int32_t color_exp_bias : 6;                       // +20
@@ -772,7 +779,11 @@ static_assert_size(RB_STENCILREFMASK, sizeof(uint32_t));
 union alignas(uint32_t) RB_DEPTH_INFO {
   uint32_t value;
   struct {
-    uint32_t depth_base : 12;                         // +0 in tiles.
+    // The original R400 structure has 12-bit depth_base, however the Xenos has
+    // periodic 11-bit EDRAM tile addressing, so this field was split in Xenia
+    // for convenience and to avoid mistakes.
+    uint32_t depth_base : 11;                         // +0 in tiles.
+    uint32_t depth_base_bit_11 : 1;                   // +11
     uint32_t : 4;                                     // +12
     xenos::DepthRenderTargetFormat depth_format : 1;  // +16
   };

@@ -72,8 +72,21 @@ enum class PrimitiveType : uint32_t {
   k2DTriStrip = 0x16,
 
   // Tessellation patches when VGT_OUTPUT_PATH_CNTL::path_select is
-  // VGTOutputPath::kTessellationEnable. The vertex shader receives patch index
-  // rather than control point indices.
+  // VGTOutputPath::kTessellationEnable. The vertex shader receives the patch
+  // index rather than control point indices.
+  // With non-adaptive tessellation, VGT_DRAW_INITIATOR::num_indices is the
+  // patch count (4D5307F1 draws single ground patches by passing 1 as the index
+  // count). VGT_INDX_OFFSET is also applied to the patch index - 4D5307F1 uses
+  // auto-indexed patches with a nonzero VGT_INDX_OFFSET, which contains the
+  // base patch index there.
+  // With adaptive tessellation, however, num_indices is the number of
+  // tessellation factors in the "index buffer" reused for tessellation factors,
+  // which is the patch count multiplied by the edge count (if num_indices is
+  // multiplied further by 4 for quad patches for the ground in 4D5307F2, for
+  // example, some incorrect patches are drawn, so Xenia shouldn't do that; also
+  // 4D5307E6 draws water triangle patches with the number of indices that is 3
+  // times the invocation count of the memexporting shader that calculates the
+  // tessellation factors for a single patch for each "point").
   kLinePatch = 0x10,
   kTrianglePatch = 0x11,
   kQuadPatch = 0x12,
@@ -99,6 +112,11 @@ enum class ClampMode : uint32_t {
   kMirrorClampToBorder = 7,
 };
 
+constexpr bool ClampModeUsesBorder(ClampMode clamp_mode) {
+  return clamp_mode == ClampMode::kClampToBorder ||
+         clamp_mode == ClampMode::kMirrorClampToBorder;
+}
+
 // TEX_FORMAT_COMP, known as GPUSIGN on the Xbox 360.
 enum class TextureSign : uint32_t {
   kUnsigned = 0,
@@ -113,7 +131,9 @@ enum class TextureSign : uint32_t {
 enum class TextureFilter : uint32_t {
   kPoint = 0,
   kLinear = 1,
-  kBaseMap = 2,  // Only applicable for mip-filter - always fetch from level 0.
+  // Only applicable to the mip filter - like OpenGL minification filters
+  // GL_NEAREST / GL_LINEAR without MIPMAP_NEAREST / MIPMAP_LINEAR.
+  kBaseMap = 2,
   kUseFetchConst = 3,
 };
 
@@ -128,10 +148,17 @@ enum class AnisoFilter : uint32_t {
 };
 
 enum class BorderColor : uint32_t {
-  k_AGBR_Black = 0,
-  k_AGBR_White = 1,
-  k_ACBYCR_BLACK = 2,
-  k_ACBCRY_BLACK = 3,
+  // (0.0, 0.0, 0.0)
+  // TODO(Triang3l): Is the alpha 0 or 1?
+  k_ABGR_Black = 0,
+  // (1.0, 1.0, 1.0, 1.0)
+  k_ABGR_White = 1,
+  // Unknown precisely, but likely (0.5, 0.0, 0.5) for unsigned (Cr, Y, Cb)
+  // TODO(Triang3l): Real hardware border color, and is the alpha 0 or 1?
+  k_ACBYCR_Black = 2,
+  // Unknown precisely, but likely (0.0, 0.5, 0.5) for unsigned (Y, Cr, Cb)
+  // TODO(Triang3l): Real hardware border color, and is the alpha 0 or 1?
+  k_ACBCRY_Black = 3,
 };
 
 // For the tfetch instruction (not the fetch constant) and related instructions,
@@ -181,6 +208,7 @@ enum class Endian128 : uint32_t {
 
 enum class IndexFormat : uint32_t {
   kInt16,
+  // Not very common, but used for some world draws in 545407E0.
   kInt32,
 };
 
@@ -239,6 +267,23 @@ enum class SurfaceNumberFormat : uint32_t {
 // specific depth/stencil values by drawing to a depth buffer's memory through a
 // color render target (to reupload a depth/stencil surface previously evicted
 // from the EDRAM to the main memory, for instance).
+//
+// EDRAM addressing is circular - a render target may be backed by a EDRAM range
+// that extends beyond 2048 tiles, in which case, what would go to the tile 2048
+// will actually be in tile 0, tile 2049 will go to tile 1, and so on. 4D5307F1
+// heavily relies on this behavior for its depth buffer. Specifically, it's used
+// the following way:
+// - First, a depth-only 1120x720 2xMSAA pass is performed with the depth buffer
+//   in tiles [1008, 2268), or [1008, 2048) and [0, 220).
+// - Then, the depth buffer in [1008, 2268) is resolved into a texture, later
+//   used in screen-space effects.
+// - The upper 1120x576 bin is drawn into the color buffer in [0, 1008), using
+//   the [1008, 2016) portion of the previously populated depth buffer for early
+//   depth testing (there seems to be no true early Z on the Xenos, only early
+//   hi-Z, but still it possibly needs to be in sync with the per-sample depth
+//   buffer), and overwriting the tail of the previously filled depth buffer in
+//   [0, 220).
+// - The lower 1120x144 bin is drawn without the pregenerated depth buffer data.
 
 enum class MsaaSamples : uint32_t {
   k1X = 0,
@@ -248,6 +293,7 @@ enum class MsaaSamples : uint32_t {
 
 constexpr uint32_t kMsaaSamplesBits = 2;
 
+constexpr uint32_t kColorRenderTargetIndexBits = 2;
 constexpr uint32_t kMaxColorRenderTargets = 4;
 
 enum class ColorRenderTargetFormat : uint32_t {
@@ -326,14 +372,17 @@ enum class DepthRenderTargetFormat : uint32_t {
 
 const char* GetDepthRenderTargetFormatName(DepthRenderTargetFormat format);
 
+float PWLGammaToLinear(float gamma);
+float LinearToPWLGamma(float linear);
+
 // Converts Xenos floating-point 7e3 color value in bits 0:9 (not clamping) to
 // an IEEE-754 32-bit floating-point number.
 float Float7e3To32(uint32_t f10);
 // Converts 24-bit unorm depth in the value (not clamping) to an IEEE-754 32-bit
 // floating-point number.
 // Converts an IEEE-754 32-bit floating-point number to Xenos floating-point
-// depth, rounding to the nearest even.
-uint32_t Float32To20e4(float f32);
+// depth, rounding to the nearest even or towards zero.
+uint32_t Float32To20e4(float f32, bool round_to_nearest_even);
 // Converts Xenos floating-point depth in bits 0:23 (not clamping) to an
 // IEEE-754 32-bit floating-point number.
 float Float20e4To32(uint32_t f24);
@@ -370,9 +419,9 @@ constexpr uint32_t kEdramSizeBytes = kEdramTileCount * kEdramTileHeightSamples *
 
 // RB_SURFACE_INFO::surface_pitch width.
 constexpr uint32_t kEdramPitchPixelsBits = 14;
-// RB_COLOR_INFO::color_base/RB_DEPTH_INFO::depth_base width (though for the
-// Xbox 360 only 11 make sense, but to avoid bounds checks).
-constexpr uint32_t kEdramBaseTilesBits = 12;
+// The part of RB_COLOR_INFO::color_base and RB_DEPTH_INFO::depth_base width
+// usable on the Xenos, which has periodic 11-bit EDRAM tile addressing.
+constexpr uint32_t kEdramBaseTilesBits = 11;
 
 constexpr uint32_t GetSurfacePitchTiles(uint32_t pitch_pixels,
                                         MsaaSamples msaa_samples,
@@ -410,7 +459,14 @@ enum class TextureFormat : uint32_t {
   k_8_A = 8,
   k_8_B = 9,
   k_8_8 = 10,
+  // Though it's unknown what exactly REP means, likely it's "repeating
+  // fraction" (the term used for normalized fixed-point formats, UNORM in
+  // particular for unsigned signedness - 0.0 to 1.0 range, like in
+  // Direct3D 10+, unlike the 0.0 to 255.0 range for D3DFMT_R8G8_B8G8 and
+  // D3DFMT_G8R8_G8B8 in Direct3D 9). 54540829 uses k_Y1_Cr_Y0_Cb_REP directly
+  // as UNORM.
   k_Cr_Y1_Cb_Y0_REP = 11,
+  // Used for videos in 54540829.
   k_Y1_Cr_Y0_Cb_REP = 12,
   k_16_16_EDRAM = 13,
   k_8_8_8_8_A = 14,
@@ -703,6 +759,16 @@ enum class ArbitraryFilter : uint32_t {
   kUseFetchConst = 7,
 };
 
+// While instructions contain 6-bit register index fields (allowing literal
+// indices, or literal index offsets, depending on the addressing mode, of up to
+// 63), the maximum total register count for a vertex and a pixel shader
+// combined is 128, and the boundary between vertex and pixel shaders can be
+// moved via SQ_PROGRAM_CNTL::VS/PS_NUM_REG, according to the IPR2015-00325
+// specification (section 8 "Register file allocation").
+constexpr uint32_t kMaxShaderTempRegistersLog2 = 7;
+constexpr uint32_t kMaxShaderTempRegisters = UINT32_C(1)
+                                             << kMaxShaderTempRegistersLog2;
+
 // a2xx_sq_ps_vtx_mode
 enum class VertexShaderExportMode : uint32_t {
   kPosition1Vector = 0,
@@ -904,29 +970,28 @@ constexpr bool IsSingleCopySampleSelected(CopySampleSelect copy_sample_select) {
          copy_sample_select <= CopySampleSelect::k3;
 }
 
-#define XE_GPU_MAKE_SWIZZLE(x, y, z, w)                        \
-  (((XE_GPU_SWIZZLE_##x) << 0) | ((XE_GPU_SWIZZLE_##y) << 3) | \
-   ((XE_GPU_SWIZZLE_##z) << 6) | ((XE_GPU_SWIZZLE_##w) << 9))
+#define XE_GPU_MAKE_TEXTURE_SWIZZLE(x, y, z, w)          \
+  (((xe::gpu::xenos::XE_GPU_TEXTURE_SWIZZLE_##x) << 0) | \
+   ((xe::gpu::xenos::XE_GPU_TEXTURE_SWIZZLE_##y) << 3) | \
+   ((xe::gpu::xenos::XE_GPU_TEXTURE_SWIZZLE_##z) << 6) | \
+   ((xe::gpu::xenos::XE_GPU_TEXTURE_SWIZZLE_##w) << 9))
 typedef enum {
-  XE_GPU_SWIZZLE_X = 0,
-  XE_GPU_SWIZZLE_R = 0,
-  XE_GPU_SWIZZLE_Y = 1,
-  XE_GPU_SWIZZLE_G = 1,
-  XE_GPU_SWIZZLE_Z = 2,
-  XE_GPU_SWIZZLE_B = 2,
-  XE_GPU_SWIZZLE_W = 3,
-  XE_GPU_SWIZZLE_A = 3,
-  XE_GPU_SWIZZLE_0 = 4,
-  XE_GPU_SWIZZLE_1 = 5,
-  XE_GPU_SWIZZLE_RGBA = XE_GPU_MAKE_SWIZZLE(R, G, B, A),
-  XE_GPU_SWIZZLE_BGRA = XE_GPU_MAKE_SWIZZLE(B, G, R, A),
-  XE_GPU_SWIZZLE_RGB1 = XE_GPU_MAKE_SWIZZLE(R, G, B, 1),
-  XE_GPU_SWIZZLE_BGR1 = XE_GPU_MAKE_SWIZZLE(B, G, R, 1),
-  XE_GPU_SWIZZLE_000R = XE_GPU_MAKE_SWIZZLE(0, 0, 0, R),
-  XE_GPU_SWIZZLE_RRR1 = XE_GPU_MAKE_SWIZZLE(R, R, R, 1),
-  XE_GPU_SWIZZLE_R111 = XE_GPU_MAKE_SWIZZLE(R, 1, 1, 1),
-  XE_GPU_SWIZZLE_R000 = XE_GPU_MAKE_SWIZZLE(R, 0, 0, 0),
-} XE_GPU_SWIZZLE;
+  XE_GPU_TEXTURE_SWIZZLE_X = 0,
+  XE_GPU_TEXTURE_SWIZZLE_R = 0,
+  XE_GPU_TEXTURE_SWIZZLE_Y = 1,
+  XE_GPU_TEXTURE_SWIZZLE_G = 1,
+  XE_GPU_TEXTURE_SWIZZLE_Z = 2,
+  XE_GPU_TEXTURE_SWIZZLE_B = 2,
+  XE_GPU_TEXTURE_SWIZZLE_W = 3,
+  XE_GPU_TEXTURE_SWIZZLE_A = 3,
+  XE_GPU_TEXTURE_SWIZZLE_0 = 4,
+  XE_GPU_TEXTURE_SWIZZLE_1 = 5,
+  XE_GPU_TEXTURE_SWIZZLE_RRRR = XE_GPU_MAKE_TEXTURE_SWIZZLE(R, R, R, R),
+  XE_GPU_TEXTURE_SWIZZLE_RGGG = XE_GPU_MAKE_TEXTURE_SWIZZLE(R, G, G, G),
+  XE_GPU_TEXTURE_SWIZZLE_RGBB = XE_GPU_MAKE_TEXTURE_SWIZZLE(R, G, B, B),
+  XE_GPU_TEXTURE_SWIZZLE_RGBA = XE_GPU_MAKE_TEXTURE_SWIZZLE(R, G, B, A),
+  XE_GPU_TEXTURE_SWIZZLE_0000 = XE_GPU_MAKE_TEXTURE_SWIZZLE(0, 0, 0, 0),
+} XE_GPU_TEXTURE_SWIZZLE;
 
 inline uint16_t GpuSwap(uint16_t value, Endian endianness) {
   switch (endianness) {
@@ -998,6 +1063,9 @@ enum class FetchConstantType : uint32_t {
   kVertex,
 };
 
+constexpr uint32_t kTextureFetchConstantCount = 32;
+constexpr uint32_t kVertexFetchConstantCount = 3 * kTextureFetchConstantCount;
+
 // XE_GPU_REG_SHADER_CONSTANT_FETCH_*
 union alignas(uint32_t) xe_gpu_vertex_fetch_t {
   struct {
@@ -1035,19 +1103,31 @@ constexpr uint32_t kTexture3DMaxWidthHeight = 1 << kTexture3DMaxWidthHeightLog2;
 constexpr uint32_t kTexture3DMaxDepthLog2 = 10;
 constexpr uint32_t kTexture3DMaxDepth = 1 << kTexture3DMaxDepthLog2;
 
-// Tiled texture sizes are in 32x32 increments for 2D, 32x32x4 for 3D.
-// 2DTiledOffset(X * 32 + x, Y * 32 + y) ==
-//     2DTiledOffset(X * 32, Y * 32) + 2DTiledOffset(x, y)
-// 3DTiledOffset(X * 32 + x, Y * 32 + y, Z * 8 + z) ==
-//     3DTiledOffset(X * 32, Y * 32, Z * 8) + 3DTiledOffset(x, y, z)
-// Both are true for negative offsets too.
+constexpr uint32_t kTextureMaxMips =
+    std::max(kTexture2DCubeMaxWidthHeightLog2, kTexture3DMaxWidthHeightLog2) +
+    1;
+
 constexpr uint32_t kTextureTileWidthHeightLog2 = 5;
 constexpr uint32_t kTextureTileWidthHeight = 1 << kTextureTileWidthHeightLog2;
 // 3D tiled texture slices 0:3 and 4:7 are stored separately in memory, in
 // non-overlapping ranges, but addressing in 4:7 is different than in 0:3.
-constexpr uint32_t kTextureTiledDepthGranularityLog2 = 2;
-constexpr uint32_t kTextureTiledDepthGranularity =
-    1 << kTextureTiledDepthGranularityLog2;
+constexpr uint32_t kTextureTileDepthLog2 = 2;
+constexpr uint32_t kTextureTileDepth = 1 << kTextureTileDepthLog2;
+
+// Texture tile address function periods:
+// - 2D 1bpb: 128x128
+// - 2D 2bpb: 64x64
+// - 2D 4bpb+: 32x32
+// - 3D 1bpb: 64x32x8
+// - 3D 2bpb+: 32x32x8
+constexpr uint32_t GetTextureTiledXBaseGranularityLog2(
+    bool is_3d, uint32_t bytes_per_block_log2) {
+  return 7 - std::min(UINT32_C(2), bytes_per_block_log2 + uint32_t(is_3d));
+}
+constexpr uint32_t GetTextureTiledYBaseGranularityLog2(
+    bool is_3d, uint32_t bytes_per_block_log2) {
+  return is_3d ? 5 : (7 - std::min(UINT32_C(2), bytes_per_block_log2));
+}
 constexpr uint32_t kTextureTiledZBaseGranularityLog2 = 3;
 constexpr uint32_t kTextureTiledZBaseGranularity =
     1 << kTextureTiledZBaseGranularityLog2;
@@ -1127,7 +1207,7 @@ union alignas(uint32_t) xe_gpu_texture_fetch_t {
     };
 
     uint32_t num_format : 1;  // +0 dword_3 frac/int
-    // xyzw, 3b each (XE_GPU_SWIZZLE)
+    // xyzw, 3b each (XE_GPU_TEXTURE_SWIZZLE)
     uint32_t swizzle : 12;                 // +1
     int32_t exp_adjust : 6;                // +13
     TextureFilter mag_filter : 2;          // +19
