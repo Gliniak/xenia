@@ -70,10 +70,14 @@ namespace d3d12 {
 namespace shaders {
 #include "xenia/gpu/shaders/bytecode/d3d12_5_1/adaptive_quad_hs.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_5_1/adaptive_triangle_hs.h"
-#include "xenia/gpu/shaders/bytecode/d3d12_5_1/continuous_quad_hs.h"
-#include "xenia/gpu/shaders/bytecode/d3d12_5_1/continuous_triangle_hs.h"
-#include "xenia/gpu/shaders/bytecode/d3d12_5_1/discrete_quad_hs.h"
-#include "xenia/gpu/shaders/bytecode/d3d12_5_1/discrete_triangle_hs.h"
+#include "xenia/gpu/shaders/bytecode/d3d12_5_1/continuous_quad_1cp_hs.h"
+#include "xenia/gpu/shaders/bytecode/d3d12_5_1/continuous_quad_4cp_hs.h"
+#include "xenia/gpu/shaders/bytecode/d3d12_5_1/continuous_triangle_1cp_hs.h"
+#include "xenia/gpu/shaders/bytecode/d3d12_5_1/continuous_triangle_3cp_hs.h"
+#include "xenia/gpu/shaders/bytecode/d3d12_5_1/discrete_quad_1cp_hs.h"
+#include "xenia/gpu/shaders/bytecode/d3d12_5_1/discrete_quad_4cp_hs.h"
+#include "xenia/gpu/shaders/bytecode/d3d12_5_1/discrete_triangle_1cp_hs.h"
+#include "xenia/gpu/shaders/bytecode/d3d12_5_1/discrete_triangle_3cp_hs.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_5_1/float24_round_ps.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_5_1/float24_truncate_ps.h"
 #include "xenia/gpu/shaders/bytecode/d3d12_5_1/tessellation_adaptive_vs.h"
@@ -643,8 +647,13 @@ void PipelineCache::InitializeShaderStorage(
       }
       GeometryShaderKey pipeline_geometry_shader_key;
       pipeline_runtime_description.geometry_shader =
-          GetGeometryShaderKey(pipeline_description.geometry_shader,
-                               pipeline_geometry_shader_key)
+          GetGeometryShaderKey(
+              pipeline_description.geometry_shader,
+              DxbcShaderTranslator::Modification(
+                  pipeline_description.vertex_shader_modification),
+              DxbcShaderTranslator::Modification(
+                  pipeline_description.pixel_shader_modification),
+              pipeline_geometry_shader_key)
               ? &GetGeometryShader(pipeline_geometry_shader_key)
               : nullptr;
       pipeline_runtime_description.root_signature =
@@ -855,47 +864,83 @@ D3D12Shader* PipelineCache::LoadShader(xenos::ShaderType shader_type,
 
 DxbcShaderTranslator::Modification
 PipelineCache::GetCurrentVertexShaderModification(
-    const Shader& shader,
-    Shader::HostVertexShaderType host_vertex_shader_type) const {
+    const Shader& shader, Shader::HostVertexShaderType host_vertex_shader_type,
+    uint32_t interpolator_mask) const {
   assert_true(shader.type() == xenos::ShaderType::kVertex);
   assert_true(shader.is_ucode_analyzed());
   const auto& regs = register_file_;
-  auto sq_program_cntl = regs.Get<reg::SQ_PROGRAM_CNTL>();
-  return DxbcShaderTranslator::Modification(
+
+  DxbcShaderTranslator::Modification modification(
       shader_translator_->GetDefaultVertexShaderModification(
-          shader.GetDynamicAddressableRegisterCount(sq_program_cntl.vs_num_reg),
+          shader.GetDynamicAddressableRegisterCount(
+              regs.Get<reg::SQ_PROGRAM_CNTL>().vs_num_reg),
           host_vertex_shader_type));
+
+  modification.vertex.interpolator_mask = interpolator_mask;
+
+  auto pa_cl_clip_cntl = regs.Get<reg::PA_CL_CLIP_CNTL>();
+  uint32_t user_clip_planes =
+      pa_cl_clip_cntl.clip_disable ? 0 : pa_cl_clip_cntl.ucp_ena;
+  modification.vertex.user_clip_plane_count = xe::bit_count(user_clip_planes);
+  modification.vertex.user_clip_plane_cull =
+      uint32_t(user_clip_planes && pa_cl_clip_cntl.ucp_cull_only_ena);
+  modification.vertex.vertex_kill_and =
+      uint32_t((shader.writes_point_size_edge_flag_kill_vertex() & 0b100) &&
+               !pa_cl_clip_cntl.vtx_kill_or);
+
+  modification.vertex.output_point_size =
+      uint32_t((shader.writes_point_size_edge_flag_kill_vertex() & 0b001) &&
+               regs.Get<reg::VGT_DRAW_INITIATOR>().prim_type ==
+                   xenos::PrimitiveType::kPointList);
+
+  return modification;
 }
 
 DxbcShaderTranslator::Modification
 PipelineCache::GetCurrentPixelShaderModification(
-    const Shader& shader, reg::RB_DEPTHCONTROL normalized_depth_control) const {
+    const Shader& shader, uint32_t interpolator_mask, uint32_t param_gen_pos,
+    reg::RB_DEPTHCONTROL normalized_depth_control) const {
   assert_true(shader.type() == xenos::ShaderType::kPixel);
   assert_true(shader.is_ucode_analyzed());
   const auto& regs = register_file_;
-  auto sq_program_cntl = regs.Get<reg::SQ_PROGRAM_CNTL>();
+
   DxbcShaderTranslator::Modification modification(
       shader_translator_->GetDefaultPixelShaderModification(
           shader.GetDynamicAddressableRegisterCount(
-              sq_program_cntl.ps_num_reg)));
+              regs.Get<reg::SQ_PROGRAM_CNTL>().ps_num_reg)));
+
+  modification.pixel.interpolator_mask = interpolator_mask;
+  modification.pixel.interpolators_centroid =
+      interpolator_mask &
+      ~xenos::GetInterpolatorSamplingPattern(
+          regs.Get<reg::RB_SURFACE_INFO>().msaa_samples,
+          regs.Get<reg::SQ_CONTEXT_MISC>().sc_sample_cntl,
+          regs.Get<reg::SQ_INTERPOLATOR_CNTL>().sampling_pattern);
+
+  if (param_gen_pos < xenos::kMaxInterpolators) {
+    modification.pixel.param_gen_enable = 1;
+    modification.pixel.param_gen_interpolator = param_gen_pos;
+    modification.pixel.param_gen_point =
+        uint32_t(regs.Get<reg::VGT_DRAW_INITIATOR>().prim_type ==
+                 xenos::PrimitiveType::kPointList);
+  } else {
+    modification.pixel.param_gen_enable = 0;
+    modification.pixel.param_gen_interpolator = 0;
+    modification.pixel.param_gen_point = 0;
+  }
+
   if (render_target_cache_.GetPath() ==
       RenderTargetCache::Path::kHostRenderTargets) {
     using DepthStencilMode =
         DxbcShaderTranslator::Modification::DepthStencilMode;
-    RenderTargetCache::DepthFloat24Conversion depth_float24_conversion =
-        render_target_cache_.depth_float24_conversion();
-    if ((depth_float24_conversion ==
-             RenderTargetCache::DepthFloat24Conversion::kOnOutputTruncating ||
-         depth_float24_conversion ==
-             RenderTargetCache::DepthFloat24Conversion::kOnOutputRounding) &&
+    if (render_target_cache_.depth_float24_convert_in_pixel_shader() &&
         normalized_depth_control.z_enable &&
         regs.Get<reg::RB_DEPTH_INFO>().depth_format ==
             xenos::DepthRenderTargetFormat::kD24FS8) {
       modification.pixel.depth_stencil_mode =
-          depth_float24_conversion ==
-                  RenderTargetCache::DepthFloat24Conversion::kOnOutputTruncating
-              ? DepthStencilMode::kFloat24Truncating
-              : DepthStencilMode::kFloat24Rounding;
+          render_target_cache_.depth_float24_round()
+              ? DepthStencilMode::kFloat24Rounding
+              : DepthStencilMode::kFloat24Truncating;
     } else {
       if (shader.implicit_early_z_write_allowed() &&
           (!shader.writes_color_target(0) ||
@@ -907,6 +952,7 @@ PipelineCache::GetCurrentPixelShaderModification(
       }
     }
   }
+
   return modification;
 }
 
@@ -1092,6 +1138,8 @@ bool PipelineCache::TranslateAnalyzedShader(
         host_shader_type = "patch-indexed quad domain";
         break;
       default:
+        assert(modification.vertex.host_vertex_shader_type ==
+               Shader::HostVertexShaderType::kVertex);
         host_shader_type = "vertex";
     }
   } else {
@@ -1362,7 +1410,12 @@ bool PipelineCache::GetCurrentStateDescription(
   }
   GeometryShaderKey geometry_shader_key;
   runtime_description_out.geometry_shader =
-      GetGeometryShaderKey(description_out.geometry_shader, geometry_shader_key)
+      GetGeometryShaderKey(
+          description_out.geometry_shader,
+          DxbcShaderTranslator::Modification(vertex_shader->modification()),
+          DxbcShaderTranslator::Modification(
+              pixel_shader ? pixel_shader->modification() : 0),
+          geometry_shader_key)
           ? &GetGeometryShader(geometry_shader_key)
           : nullptr;
 
@@ -1441,16 +1494,8 @@ bool PipelineCache::GetCurrentStateDescription(
     float polygon_offset, polygon_offset_scale;
     draw_util::GetPreferredFacePolygonOffset(
         regs, primitive_polygonal, polygon_offset_scale, polygon_offset);
-    float polygon_offset_host_scale = draw_util::GetD3D10PolygonOffsetFactor(
-        regs.Get<reg::RB_DEPTH_INFO>().depth_format, true);
-    // Using ceil here just in case a game wants the offset but passes a value
-    // that is too small - it's better to apply more offset than to make depth
-    // fighting worse or to disable the offset completely (Direct3D 12 takes an
-    // integer value).
-    description_out.depth_bias =
-        int32_t(
-            std::ceil(std::abs(polygon_offset * polygon_offset_host_scale))) *
-        (polygon_offset < 0.0f ? -1 : 1);
+    description_out.depth_bias = draw_util::GetD3D10IntegerPolygonOffset(
+        regs.Get<reg::RB_DEPTH_INFO>().depth_format, polygon_offset);
     description_out.depth_bias_slope_scaled =
         polygon_offset_scale * xenos::kPolygonOffsetScaleSubpixelUnit;
   }
@@ -1645,20 +1690,26 @@ bool PipelineCache::GetCurrentStateDescription(
 }
 
 bool PipelineCache::GetGeometryShaderKey(
-    PipelineGeometryShader geometry_shader_type, GeometryShaderKey& key_out) {
+    PipelineGeometryShader geometry_shader_type,
+    DxbcShaderTranslator::Modification vertex_shader_modification,
+    DxbcShaderTranslator::Modification pixel_shader_modification,
+    GeometryShaderKey& key_out) {
   if (geometry_shader_type == PipelineGeometryShader::kNone) {
     return false;
   }
+  assert_true(vertex_shader_modification.vertex.interpolator_mask ==
+              pixel_shader_modification.pixel.interpolator_mask);
   GeometryShaderKey key;
   key.type = geometry_shader_type;
-  // TODO(Triang3l): Make the linkage parameters depend on the real needs of the
-  // vertex and the pixel shader.
-  key.interpolator_count = xenos::kMaxInterpolators;
-  key.user_clip_plane_count = 6;
-  key.user_clip_plane_cull = 0;
-  key.has_vertex_kill_and = 1;
-  key.has_point_size = 1;
-  key.has_point_coordinates = 1;
+  key.interpolator_count =
+      xe::bit_count(vertex_shader_modification.vertex.interpolator_mask);
+  key.user_clip_plane_count =
+      vertex_shader_modification.vertex.user_clip_plane_count;
+  key.user_clip_plane_cull =
+      vertex_shader_modification.vertex.user_clip_plane_cull;
+  key.has_vertex_kill_and = vertex_shader_modification.vertex.vertex_kill_and;
+  key.has_point_size = vertex_shader_modification.vertex.output_point_size;
+  key.has_point_coordinates = pixel_shader_modification.pixel.param_gen_point;
   key_out = key;
   return true;
 }
@@ -1900,16 +1951,15 @@ void PipelineCache::CreateDxbcGeometryShader(
   uint32_t input_clip_and_cull_distance_count =
       input_clip_distance_count + input_cull_distance_count;
 
-  // Interpolators, point size, position, clip and cull distances (parameters
-  // containing only clip or cull distances, and also one parameter containing
-  // both if present).
-  // TODO(Triang3l): Reorder as needed when the respective changes are done in
-  // the shader translator.
+  // Interpolators, position, clip and cull distances (parameters containing
+  // only clip or cull distances, and also one parameter containing both if
+  // present), point size.
   uint32_t isgn_parameter_count =
-      key.interpolator_count + key.has_point_size + 1 +
+      key.interpolator_count + 1 +
       ((input_clip_and_cull_distance_count + 3) / 4) +
       uint32_t(input_cull_distance_count &&
-               (input_clip_distance_count & 3) != 0);
+               (input_clip_distance_count & 3) != 0) +
+      key.has_point_size;
 
   // Reserve space for the header and the parameters.
   shader_out[blob_offset_position_dwords] =
@@ -1924,7 +1974,7 @@ void PipelineCache::CreateDxbcGeometryShader(
   name_ptr =
       uint32_t((shader_out.size() - isgn_position_dwords) * sizeof(uint32_t));
   uint32_t isgn_name_ptr_texcoord = name_ptr;
-  if (key.interpolator_count || key.has_point_size) {
+  if (key.interpolator_count) {
     name_ptr += dxbc::AppendAlignedString(shader_out, "TEXCOORD");
   }
   uint32_t isgn_name_ptr_sv_position = name_ptr;
@@ -1937,12 +1987,16 @@ void PipelineCache::CreateDxbcGeometryShader(
   if (input_cull_distance_count) {
     name_ptr += dxbc::AppendAlignedString(shader_out, "SV_CullDistance");
   }
+  uint32_t isgn_name_ptr_xepsize = name_ptr;
+  if (key.has_point_size) {
+    name_ptr += dxbc::AppendAlignedString(shader_out, "XEPSIZE");
+  }
 
   // Header and parameters.
   uint32_t input_register_interpolators = UINT32_MAX;
-  uint32_t input_register_point_size = UINT32_MAX;
   uint32_t input_register_position;
   uint32_t input_register_clip_and_cull_distances = UINT32_MAX;
+  uint32_t input_register_point_size = UINT32_MAX;
   {
     // Header.
     auto& isgn_header = *reinterpret_cast<dxbc::Signature*>(
@@ -1974,27 +2028,7 @@ void PipelineCache::CreateDxbcGeometryShader(
       }
     }
 
-    // Point size.
-    // TODO(Triang3l): Put the size in X of float1, not in Z of float3, when
-    // linkage via shader modifications is done.
-    // TODO(Triang3l): Rename from TEXCOORD# to XEPSIZE when linkage via shader
-    // modifications is done.
-    if (key.has_point_size) {
-      input_register_point_size = input_register_index;
-      assert_true(isgn_parameter_index < isgn_parameter_count);
-      dxbc::SignatureParameter& isgn_point_size =
-          isgn_parameters[isgn_parameter_index++];
-      isgn_point_size.semantic_name_ptr = isgn_name_ptr_texcoord;
-      isgn_point_size.semantic_index = key.interpolator_count;
-      isgn_point_size.component_type =
-          dxbc::SignatureRegisterComponentType::kFloat32;
-      isgn_point_size.register_index = input_register_index++;
-      isgn_point_size.mask = 0b0111;
-      isgn_point_size.always_reads_mask =
-          key.type == PipelineGeometryShader::kPointList ? 0b0100 : 0;
-    }
-
-    // Position.
+    // Position (SV_Position).
     input_register_position = input_register_index;
     assert_true(isgn_parameter_index < isgn_parameter_count);
     dxbc::SignatureParameter& isgn_sv_position =
@@ -2007,7 +2041,7 @@ void PipelineCache::CreateDxbcGeometryShader(
     isgn_sv_position.mask = 0b1111;
     isgn_sv_position.always_reads_mask = 0b1111;
 
-    // Clip and cull distances.
+    // Clip and cull distances (SV_ClipDistance#, SV_CullDistance#).
     if (input_clip_and_cull_distance_count) {
       input_register_clip_and_cull_distances = input_register_index;
       uint32_t isgn_cull_distance_semantic_index = 0;
@@ -2055,6 +2089,21 @@ void PipelineCache::CreateDxbcGeometryShader(
       }
     }
 
+    // Point size (XEPSIZE).
+    if (key.has_point_size) {
+      input_register_point_size = input_register_index;
+      assert_true(isgn_parameter_index < isgn_parameter_count);
+      dxbc::SignatureParameter& isgn_point_size =
+          isgn_parameters[isgn_parameter_index++];
+      isgn_point_size.semantic_name_ptr = isgn_name_ptr_xepsize;
+      isgn_point_size.component_type =
+          dxbc::SignatureRegisterComponentType::kFloat32;
+      isgn_point_size.register_index = input_register_index++;
+      isgn_point_size.mask = 0b0001;
+      isgn_point_size.always_reads_mask =
+          key.type == PipelineGeometryShader::kPointList ? 0b0001 : 0;
+    }
+
     assert_true(isgn_parameter_index == isgn_parameter_count);
   }
 
@@ -2073,8 +2122,6 @@ void PipelineCache::CreateDxbcGeometryShader(
   // ***************************************************************************
 
   // Interpolators, point coordinates, position, clip distances.
-  // TODO(Triang3l): Reorder as needed when the respective changes are done in
-  // the shader translator.
   uint32_t osgn_parameter_count = key.interpolator_count +
                                   key.has_point_coordinates + 1 +
                                   ((input_clip_distance_count + 3) / 4);
@@ -2092,8 +2139,12 @@ void PipelineCache::CreateDxbcGeometryShader(
   name_ptr =
       uint32_t((shader_out.size() - osgn_position_dwords) * sizeof(uint32_t));
   uint32_t osgn_name_ptr_texcoord = name_ptr;
-  if (key.interpolator_count || key.has_point_coordinates) {
+  if (key.interpolator_count) {
     name_ptr += dxbc::AppendAlignedString(shader_out, "TEXCOORD");
+  }
+  uint32_t osgn_name_ptr_xespritetexcoord = name_ptr;
+  if (key.has_point_coordinates) {
+    name_ptr += dxbc::AppendAlignedString(shader_out, "XESPRITETEXCOORD");
   }
   uint32_t osgn_name_ptr_sv_position = name_ptr;
   name_ptr += dxbc::AppendAlignedString(shader_out, "SV_Position");
@@ -2137,26 +2188,21 @@ void PipelineCache::CreateDxbcGeometryShader(
       }
     }
 
-    // Point coordinates.
-    // TODO(Triang3l): Put the coordinates in XY of float2 when linkage via
-    // shader modifications is done.
-    // TODO(Triang3l): Rename from TEXCOORD# to XESPRITETEXCOORD when linkage
-    // via shader modifications is done.
+    // Point coordinates (XESPRITETEXCOORD).
     if (key.has_point_coordinates) {
       output_register_point_coordinates = output_register_index;
       assert_true(osgn_parameter_index < osgn_parameter_count);
       dxbc::SignatureParameterForGS& osgn_point_coordinates =
           osgn_parameters[osgn_parameter_index++];
-      osgn_point_coordinates.semantic_name_ptr = osgn_name_ptr_texcoord;
-      osgn_point_coordinates.semantic_index = key.interpolator_count;
+      osgn_point_coordinates.semantic_name_ptr = osgn_name_ptr_xespritetexcoord;
       osgn_point_coordinates.component_type =
           dxbc::SignatureRegisterComponentType::kFloat32;
       osgn_point_coordinates.register_index = output_register_index++;
-      osgn_point_coordinates.mask = 0b0111;
+      osgn_point_coordinates.mask = 0b0011;
       osgn_point_coordinates.never_writes_mask = 0b1100;
     }
 
-    // Position.
+    // Position (SV_Position).
     output_register_position = output_register_index;
     assert_true(osgn_parameter_index < osgn_parameter_count);
     dxbc::SignatureParameterForGS& osgn_sv_position =
@@ -2168,7 +2214,7 @@ void PipelineCache::CreateDxbcGeometryShader(
     osgn_sv_position.register_index = output_register_index++;
     osgn_sv_position.mask = 0b1111;
 
-    // Clip distances.
+    // Clip distances (SV_ClipDistance#).
     if (input_clip_distance_count) {
       output_register_clip_distances = output_register_index;
       for (uint32_t i = 0; i < input_clip_distance_count; i += 4) {
@@ -2270,11 +2316,6 @@ void PipelineCache::CreateDxbcGeometryShader(
     a.OpDclInput(dxbc::Dest::V2D(input_primitive_vertex_count,
                                  input_register_interpolators + i));
   }
-  if (key.has_point_size && key.type == PipelineGeometryShader::kPointList) {
-    assert_true(input_register_point_size != UINT32_MAX);
-    a.OpDclInput(dxbc::Dest::V2D(input_primitive_vertex_count,
-                                 input_register_point_size, 0b0100));
-  }
   a.OpDclInputSIV(
       dxbc::Dest::V2D(input_primitive_vertex_count, input_register_position),
       dxbc::Name::kPosition);
@@ -2305,6 +2346,11 @@ void PipelineCache::CreateDxbcGeometryShader(
                           input_register_clip_and_cull_distances + (i >> 2),
                           cull_distance_mask));
     }
+  }
+  if (key.has_point_size && key.type == PipelineGeometryShader::kPointList) {
+    assert_true(input_register_point_size != UINT32_MAX);
+    a.OpDclInput(dxbc::Dest::V2D(input_primitive_vertex_count,
+                                 input_register_point_size, 0b0001));
   }
 
   // At least 1 temporary register needed to discard primitives with NaN
@@ -2408,10 +2454,10 @@ void PipelineCache::CreateDxbcGeometryShader(
         // constant size. The per-vertex diameter is already clamped in the
         // vertex shader (combined with making it non-negative).
         a.OpGE(dxbc::Dest::R(0, 0b0001),
-               dxbc::Src::V2D(0, input_register_point_size, dxbc::Src::kZZZZ),
+               dxbc::Src::V2D(0, input_register_point_size, dxbc::Src::kXXXX),
                dxbc::Src::LF(0.0f));
         a.OpMovC(dxbc::Dest::R(0, 0b0011), dxbc::Src::R(0, dxbc::Src::kXXXX),
-                 dxbc::Src::V2D(0, input_register_point_size, dxbc::Src::kZZZZ),
+                 dxbc::Src::V2D(0, input_register_point_size, dxbc::Src::kXXXX),
                  point_size_src);
         point_size_src = dxbc::Src::R(0, 0b0100);
       }
@@ -2813,15 +2859,24 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
       case xenos::TessellationMode::kDiscrete:
         switch (host_vertex_shader_type) {
           case Shader::HostVertexShaderType::kTriangleDomainCPIndexed:
-          case Shader::HostVertexShaderType::kTriangleDomainPatchIndexed:
-            state_desc.HS.pShaderBytecode = shaders::discrete_triangle_hs;
+            state_desc.HS.pShaderBytecode = shaders::discrete_triangle_3cp_hs;
             state_desc.HS.BytecodeLength =
-                sizeof(shaders::discrete_triangle_hs);
+                sizeof(shaders::discrete_triangle_3cp_hs);
+            break;
+          case Shader::HostVertexShaderType::kTriangleDomainPatchIndexed:
+            state_desc.HS.pShaderBytecode = shaders::discrete_triangle_1cp_hs;
+            state_desc.HS.BytecodeLength =
+                sizeof(shaders::discrete_triangle_1cp_hs);
             break;
           case Shader::HostVertexShaderType::kQuadDomainCPIndexed:
+            state_desc.HS.pShaderBytecode = shaders::discrete_quad_4cp_hs;
+            state_desc.HS.BytecodeLength =
+                sizeof(shaders::discrete_quad_4cp_hs);
+            break;
           case Shader::HostVertexShaderType::kQuadDomainPatchIndexed:
-            state_desc.HS.pShaderBytecode = shaders::discrete_quad_hs;
-            state_desc.HS.BytecodeLength = sizeof(shaders::discrete_quad_hs);
+            state_desc.HS.pShaderBytecode = shaders::discrete_quad_1cp_hs;
+            state_desc.HS.BytecodeLength =
+                sizeof(shaders::discrete_quad_1cp_hs);
             break;
           default:
             assert_unhandled_case(host_vertex_shader_type);
@@ -2831,15 +2886,24 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
       case xenos::TessellationMode::kContinuous:
         switch (host_vertex_shader_type) {
           case Shader::HostVertexShaderType::kTriangleDomainCPIndexed:
-          case Shader::HostVertexShaderType::kTriangleDomainPatchIndexed:
-            state_desc.HS.pShaderBytecode = shaders::continuous_triangle_hs;
+            state_desc.HS.pShaderBytecode = shaders::continuous_triangle_3cp_hs;
             state_desc.HS.BytecodeLength =
-                sizeof(shaders::continuous_triangle_hs);
+                sizeof(shaders::continuous_triangle_3cp_hs);
+            break;
+          case Shader::HostVertexShaderType::kTriangleDomainPatchIndexed:
+            state_desc.HS.pShaderBytecode = shaders::continuous_triangle_1cp_hs;
+            state_desc.HS.BytecodeLength =
+                sizeof(shaders::continuous_triangle_1cp_hs);
             break;
           case Shader::HostVertexShaderType::kQuadDomainCPIndexed:
+            state_desc.HS.pShaderBytecode = shaders::continuous_quad_4cp_hs;
+            state_desc.HS.BytecodeLength =
+                sizeof(shaders::continuous_quad_4cp_hs);
+            break;
           case Shader::HostVertexShaderType::kQuadDomainPatchIndexed:
-            state_desc.HS.pShaderBytecode = shaders::continuous_quad_hs;
-            state_desc.HS.BytecodeLength = sizeof(shaders::continuous_quad_hs);
+            state_desc.HS.pShaderBytecode = shaders::continuous_quad_1cp_hs;
+            state_desc.HS.BytecodeLength =
+                sizeof(shaders::continuous_quad_1cp_hs);
             break;
           default:
             assert_unhandled_case(host_vertex_shader_type);
@@ -2917,20 +2981,16 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
     state_desc.PS.pShaderBytecode = depth_only_pixel_shader_.data();
     state_desc.PS.BytecodeLength = depth_only_pixel_shader_.size();
   } else {
-    if ((description.depth_func != xenos::CompareFunction::kAlways ||
+    if (render_target_cache_.depth_float24_convert_in_pixel_shader() &&
+        (description.depth_func != xenos::CompareFunction::kAlways ||
          description.depth_write) &&
         description.depth_format == xenos::DepthRenderTargetFormat::kD24FS8) {
-      switch (render_target_cache_.depth_float24_conversion()) {
-        case RenderTargetCache::DepthFloat24Conversion::kOnOutputTruncating:
-          state_desc.PS.pShaderBytecode = shaders::float24_truncate_ps;
-          state_desc.PS.BytecodeLength = sizeof(shaders::float24_truncate_ps);
-          break;
-        case RenderTargetCache::DepthFloat24Conversion::kOnOutputRounding:
-          state_desc.PS.pShaderBytecode = shaders::float24_round_ps;
-          state_desc.PS.BytecodeLength = sizeof(shaders::float24_round_ps);
-          break;
-        default:
-          break;
+      if (render_target_cache_.depth_float24_round()) {
+        state_desc.PS.pShaderBytecode = shaders::float24_round_ps;
+        state_desc.PS.BytecodeLength = sizeof(shaders::float24_round_ps);
+      } else {
+        state_desc.PS.pShaderBytecode = shaders::float24_truncate_ps;
+        state_desc.PS.BytecodeLength = sizeof(shaders::float24_truncate_ps);
       }
     }
   }

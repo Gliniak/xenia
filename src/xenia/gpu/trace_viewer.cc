@@ -10,13 +10,16 @@
 #include "xenia/gpu/trace_viewer.h"
 
 #include <cinttypes>
+#include <string>
 
 #include "third_party/half/include/half.hpp"
 #include "third_party/imgui/imgui.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/clock.h"
+#include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
+#include "xenia/base/platform.h"
 #include "xenia/base/string.h"
 #include "xenia/base/system.h"
 #include "xenia/base/threading.h"
@@ -38,7 +41,8 @@
 #include "xenia/ui/windowed_app_context.h"
 #include "xenia/xbox.h"
 
-DEFINE_path(target_trace_file, "", "Specifies the trace file to load.", "GPU");
+DEFINE_string(target_trace_file, "", "Specifies the trace file to load.",
+              "GPU");
 
 namespace xe {
 namespace gpu {
@@ -62,9 +66,13 @@ TraceViewer::TraceViewer(xe::ui::WindowedAppContext& app_context,
 TraceViewer::~TraceViewer() = default;
 
 bool TraceViewer::OnInitialize() {
-  std::filesystem::path path = cvars::target_trace_file;
+  std::string path = cvars::target_trace_file;
 
   // If no path passed, ask the user.
+  // On Android, however, there's no synchronous file picker, and the trace file
+  // must be picked externally and provided to the trace viewer activity via the
+  // intent.
+#if !XE_PLATFORM_ANDROID
   if (path.empty()) {
     auto file_picker = xe::ui::FilePicker::Create();
     file_picker->set_mode(ui::FilePicker::Mode::kOpen);
@@ -78,10 +86,11 @@ bool TraceViewer::OnInitialize() {
     if (file_picker->Show()) {
       auto selected_files = file_picker->selected_files();
       if (!selected_files.empty()) {
-        path = selected_files[0];
+        path = xe::path_to_utf8(selected_files[0]);
       }
     }
   }
+#endif  // !XE_PLATFORM_ANDROID
 
   if (path.empty()) {
     xe::ShowSimpleMessageBox(xe::SimpleMessageBoxType::Warning,
@@ -89,15 +98,12 @@ bool TraceViewer::OnInitialize() {
     return false;
   }
 
-  // Normalize the path and make absolute.
-  auto abs_path = std::filesystem::absolute(path);
-
   if (!Setup()) {
     xe::ShowSimpleMessageBox(xe::SimpleMessageBoxType::Error,
                              "Unable to setup trace viewer");
     return false;
   }
-  if (!Load(std::move(abs_path))) {
+  if (!Load(path)) {
     xe::ShowSimpleMessageBox(xe::SimpleMessageBoxType::Error,
                              "Unable to load trace file; not found?");
     return false;
@@ -114,7 +120,7 @@ bool TraceViewer::Setup() {
   // Main display window.
   assert_true(app_context().IsInUIThread());
   window_ = xe::ui::Window::Create(app_context(), "xenia-gpu-trace-viewer",
-                                   1920, 1200);
+                                   1920, 1080);
   window_->AddListener(&window_listener_);
   window_->AddInputListener(&window_listener_, kZOrderTraceViewerInput);
   if (!window_->Open()) {
@@ -125,7 +131,7 @@ bool TraceViewer::Setup() {
   // Create the emulator but don't initialize so we can setup the window.
   emulator_ = std::make_unique<Emulator>("", "", "", "");
   X_STATUS result = emulator_->Setup(
-      window_.get(), nullptr, nullptr,
+      window_.get(), nullptr, false, nullptr,
       [this]() { return CreateGraphicsSystem(); }, nullptr);
   if (XFAILED(result)) {
     XELOGE("Failed to setup emulator: {:08X}", result);
@@ -135,28 +141,27 @@ bool TraceViewer::Setup() {
   graphics_system_ = emulator_->graphics_system();
 
   player_ = std::make_unique<TracePlayer>(graphics_system_);
-  player_->SetPresentLastCopy(true);
 
   // Setup drawing to the window.
-  xe::ui::GraphicsProvider& graphics_provider = *graphics_system_->provider();
-  presenter_ = graphics_provider.CreatePresenter();
-  if (!presenter_) {
+  ui::Presenter* presenter = graphics_system_->presenter();
+  if (!presenter) {
     XELOGE("Failed to initialize the presenter");
     return false;
   }
+  xe::ui::GraphicsProvider& graphics_provider = *graphics_system_->provider();
   immediate_drawer_ = graphics_provider.CreateImmediateDrawer();
   if (!immediate_drawer_) {
     XELOGE("Failed to initialize the immediate drawer");
     return false;
   }
-  immediate_drawer_->SetPresenter(presenter_.get());
+  immediate_drawer_->SetPresenter(presenter);
   imgui_drawer_ =
       std::make_unique<xe::ui::ImGuiDrawer>(window_.get(), kZOrderImGui);
-  imgui_drawer_->SetPresenterAndImmediateDrawer(presenter_.get(),
+  imgui_drawer_->SetPresenterAndImmediateDrawer(presenter,
                                                 immediate_drawer_.get());
   trace_viewer_dialog_ = std::unique_ptr<TraceViewerDialog>(
       new TraceViewerDialog(imgui_drawer_.get(), *this));
-  window_->SetPresenter(presenter_.get());
+  window_->SetPresenter(presenter);
 
   return true;
 }
@@ -180,9 +185,8 @@ void TraceViewer::TraceViewerDialog::OnDraw(ImGuiIO& io) {
   trace_viewer_.DrawUI();
 }
 
-bool TraceViewer::Load(const std::filesystem::path& trace_file_path) {
-  auto file_name = trace_file_path.filename();
-  window_->SetTitle("Xenia GPU Trace Viewer: " + xe::path_to_utf8(file_name));
+bool TraceViewer::Load(const std::string_view trace_file_path) {
+  window_->SetTitle("Xenia GPU Trace Viewer: " + std::string(trace_file_path));
 
   if (!player_->Open(trace_file_path)) {
     XELOGE("Could not load trace file");
@@ -219,6 +223,7 @@ void TraceViewer::DrawUI() {
 void TraceViewer::DrawControllerUI() {
   ImGui::SetNextWindowPos(ImVec2(5, 5), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowSize(ImVec2(340, 60));
+  ImGui::SetNextWindowBgAlpha(kWindowBgAlpha);
   if (!ImGui::Begin("Controller", nullptr)) {
     ImGui::End();
     return;
@@ -256,7 +261,7 @@ void TraceViewer::DrawControllerUI() {
   }
 
   ImGui::SameLine();
-  ImGui::SliderInt("", &target_frame, 0, player_->frame_count() - 1);
+  ImGui::SliderInt("##", &target_frame, 0, player_->frame_count() - 1);
   if (target_frame != player_->current_frame_index() &&
       !player_->is_playing_trace()) {
     player_->SeekFrame(target_frame);
@@ -270,6 +275,7 @@ void TraceViewer::DrawPacketDisassemblerUI() {
       ImVec2(float(window_->GetActualLogicalWidth()) - 500 - 5, 5),
       ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowSize(ImVec2(500, 300));
+  ImGui::SetNextWindowBgAlpha(kWindowBgAlpha);
   if (!ImGui::Begin("Packet Disassembler", nullptr)) {
     ImGui::End();
     return;
@@ -489,6 +495,7 @@ int TraceViewer::RecursiveDrawCommandBufferUI(
 void TraceViewer::DrawCommandListUI() {
   ImGui::SetNextWindowPos(ImVec2(5, 70), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowSize(ImVec2(200, 640));
+  ImGui::SetNextWindowBgAlpha(kWindowBgAlpha);
   if (!ImGui::Begin("Command List", nullptr)) {
     ImGui::End();
     return;
@@ -550,7 +557,7 @@ void TraceViewer::DrawCommandListUI() {
   }
 
   ImGui::PushItemWidth(float(column_width - 15));
-  ImGui::SliderInt("", &target_command, -1, command_count - 1);
+  ImGui::SliderInt("##", &target_command, -1, command_count - 1);
   ImGui::PopItemWidth();
 
   if (target_command != player_->current_command_index() &&
@@ -729,8 +736,8 @@ void TraceViewer::DrawTextureInfo(
   ImGui::Columns(2);
   if (texture) {
     ImVec2 button_size(256, 256);
-    if (ImGui::ImageButton(ImTextureID(texture), button_size, ImVec2(0, 0),
-                           ImVec2(1, 1))) {
+    if (ImGui::ImageButton("#texture_info_image", ImTextureID(texture),
+                           button_size, ImVec2(0, 0), ImVec2(1, 1))) {
       // show viewer
     }
   } else {
@@ -814,8 +821,7 @@ void TraceViewer::DrawVertexFetcher(Shader* shader,
   int display_start, display_end;
   ImGui::CalcListClipping(vertex_count, ImGui::GetTextLineHeight(),
                           &display_start, &display_end);
-  ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
-                       (display_start)*ImGui::GetTextLineHeight());
+  ImGui::Dummy(ImVec2(0, (display_start)*ImGui::GetTextLineHeight()));
   ImGui::Columns(column_count);
   if (display_start <= 1) {
     for (size_t el_index = 0; el_index < vertex_binding.attributes.size();
@@ -1002,8 +1008,8 @@ void TraceViewer::DrawVertexFetcher(Shader* shader,
     }
   }
   ImGui::Columns(1);
-  ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (vertex_count - display_end) *
-                                                    ImGui::GetTextLineHeight());
+  ImGui::Dummy(
+      ImVec2(0, (vertex_count - display_end) * ImGui::GetTextLineHeight()));
   ImGui::PopStyleVar();
   ImGui::EndChild();
 }
@@ -1102,6 +1108,7 @@ void TraceViewer::DrawStateUI() {
       ImVec2(float(window_->GetActualLogicalWidth()) - 500 - 5, 30),
       ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowSize(ImVec2(500, 680));
+  ImGui::SetNextWindowBgAlpha(kWindowBgAlpha);
   if (!ImGui::Begin("State", nullptr)) {
     ImGui::End();
     return;
@@ -1463,19 +1470,21 @@ void TraceViewer::DrawStateUI() {
         ImVec2 button_pos = ImGui::GetCursorScreenPos();
         ImVec2 button_size(256, 256);
         ImTextureID tex = 0;
+        ImGui::PushID(i);
         if (write_mask) {
           auto color_target = GetColorRenderTarget(surface_pitch, surface_msaa,
                                                    color_base, color_format);
           tex = ImTextureID(color_target);
-          if (ImGui::ImageButton(tex, button_size, ImVec2(0, 0),
+          if (ImGui::ImageButton("#color_image", tex, button_size, ImVec2(0, 0),
                                  ImVec2(1, 1))) {
             // show viewer
           }
         } else {
-          ImGui::ImageButton(ImTextureID(0), button_size, ImVec2(0, 0),
-                             ImVec2(1, 1), -1, ImVec4(0, 0, 0, 0),
+          ImGui::ImageButton("#color_image", ImTextureID(0), button_size,
+                             ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0),
                              ImVec4(0, 0, 0, 0));
         }
+        ImGui::PopID();
         if (ImGui::IsItemHovered()) {
           ImGui::BeginTooltip();
           ImGui::Text("Color Target %d (%s), base %.4X, pitch %d, format %s", i,
@@ -1586,8 +1595,8 @@ void TraceViewer::DrawStateUI() {
 
       auto button_pos = ImGui::GetCursorScreenPos();
       ImVec2 button_size(256, 256);
-      ImGui::ImageButton(ImTextureID(depth_target), button_size, ImVec2(0, 0),
-                         ImVec2(1, 1));
+      ImGui::ImageButton("#depth_stencil_image", ImTextureID(depth_target),
+                         button_size, ImVec2(0, 0), ImVec2(1, 1));
       if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
 
@@ -1640,8 +1649,7 @@ void TraceViewer::DrawStateUI() {
       ImGui::CalcListClipping(int(vertices.size() / 4),
                               ImGui::GetTextLineHeight(), &display_start,
                               &display_end);
-      ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
-                           (display_start)*ImGui::GetTextLineHeight());
+      ImGui::Dummy(ImVec2(0, (display_start)*ImGui::GetTextLineHeight()));
 
       ImGui::Columns(int(el_size), "#vsvertices", true);
       for (size_t i = display_start; i < display_end; i++) {
@@ -1662,9 +1670,8 @@ void TraceViewer::DrawStateUI() {
       }
       ImGui::Columns(1);
 
-      ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
-                           ((vertices.size() / 4) - display_end) *
-                               ImGui::GetTextLineHeight());
+      ImGui::Dummy(ImVec2(0, ((vertices.size() / 4) - display_end) *
+                                 ImGui::GetTextLineHeight()));
       ImGui::EndChild();
     } else {
       ImGui::Text("No vertex shader output");
@@ -1708,8 +1715,7 @@ void TraceViewer::DrawStateUI() {
       ImGui::CalcListClipping(1 + draw_info.index_count,
                               ImGui::GetTextLineHeight(), &display_start,
                               &display_end);
-      ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
-                           (display_start)*ImGui::GetTextLineHeight());
+      ImGui::Dummy(ImVec2(0, (display_start)*ImGui::GetTextLineHeight()));
       ImGui::Columns(2, "#indices", true);
       ImGui::SetColumnOffset(1, 60);
       if (display_start <= 1) {
@@ -1744,9 +1750,8 @@ void TraceViewer::DrawStateUI() {
         ImGui::NextColumn();
       }
       ImGui::Columns(1);
-      ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
-                           (draw_info.index_count - display_end) *
-                               ImGui::GetTextLineHeight());
+      ImGui::Dummy(ImVec2(0, (draw_info.index_count - display_end) *
+                                 ImGui::GetTextLineHeight()));
       ImGui::PopStyleVar();
       ImGui::EndChild();
     }

@@ -43,7 +43,8 @@ ImGuiDrawer::~ImGuiDrawer() {
     window_->RemoveInputListener(this);
     if (internal_state_) {
       ImGui::SetCurrentContext(internal_state_);
-      if (ImGui::IsAnyMouseDown()) {
+      if (touch_pointer_id_ == TouchEvent::kPointerIDNone &&
+          ImGui::IsAnyMouseDown()) {
         window_->ReleaseMouse();
       }
     }
@@ -61,11 +62,11 @@ void ImGuiDrawer::AddDialog(ImGuiDialog* dialog) {
       dialogs_.cend()) {
     return;
   }
-  if (dialog_loop_next_index_ == SIZE_MAX && dialogs_.empty()) {
-    // First dialog added. dialog_loop_next_index_ == SIZE_MAX is also checked
-    // because in a situation of removing the only dialog, then adding a dialog,
-    // from within a dialog's Draw function, the removal would not cause the
-    // listener and the drawer to be removed (it's deferred in this case).
+  if (dialogs_.empty() && !IsDrawingDialogs()) {
+    // First dialog added. !IsDrawingDialogs() is also checked because in a
+    // situation of removing the only dialog, then adding a dialog, from within
+    // a dialog's Draw function, re-registering the ImGuiDrawer may result in
+    // ImGui being drawn multiple times in the current frame.
     window_->AddInputListener(this, z_order_);
     if (presenter_) {
       presenter_->AddUIDrawerFromUIThread(this, z_order_);
@@ -80,7 +81,7 @@ void ImGuiDrawer::RemoveDialog(ImGuiDialog* dialog) {
   if (it == dialogs_.cend()) {
     return;
   }
-  if (dialog_loop_next_index_ != SIZE_MAX) {
+  if (IsDrawingDialogs()) {
     // Actualize the next dialog index after the erasure from the vector.
     size_t existing_index = size_t(std::distance(dialogs_.cbegin(), it));
     if (dialog_loop_next_index_ > existing_index) {
@@ -88,17 +89,7 @@ void ImGuiDrawer::RemoveDialog(ImGuiDialog* dialog) {
     }
   }
   dialogs_.erase(it);
-  if (dialog_loop_next_index_ == SIZE_MAX && dialogs_.empty()) {
-    if (presenter_) {
-      presenter_->RemoveUIDrawerFromUIThread(this);
-    }
-    window_->RemoveInputListener(this);
-    // Clear all input since no input will be received anymore, and when the
-    // drawer becomes active again, it'd have an outdated input state otherwise
-    // which will be persistent until new events actualize individual input
-    // properties.
-    ClearInput();
-  }
+  DetachIfLastDialogRemoved();
 }
 
 void ImGuiDrawer::Initialize() {
@@ -193,26 +184,38 @@ void ImGuiDrawer::Initialize() {
   style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.00f, 1.00f, 0.00f, 0.21f);
   style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.20f, 0.20f, 0.20f, 0.35f);
 
-  io.KeyMap[ImGuiKey_Tab] = int(ui::VirtualKey::kTab);
-  io.KeyMap[ImGuiKey_LeftArrow] = int(ui::VirtualKey::kLeft);
-  io.KeyMap[ImGuiKey_RightArrow] = int(ui::VirtualKey::kRight);
-  io.KeyMap[ImGuiKey_UpArrow] = int(ui::VirtualKey::kUp);
-  io.KeyMap[ImGuiKey_DownArrow] = int(ui::VirtualKey::kDown);
-  io.KeyMap[ImGuiKey_Home] = int(ui::VirtualKey::kHome);
-  io.KeyMap[ImGuiKey_End] = int(ui::VirtualKey::kEnd);
-  io.KeyMap[ImGuiKey_Delete] = int(ui::VirtualKey::kDelete);
-  io.KeyMap[ImGuiKey_Backspace] = int(ui::VirtualKey::kBack);
-  io.KeyMap[ImGuiKey_Enter] = int(ui::VirtualKey::kReturn);
-  io.KeyMap[ImGuiKey_Escape] = int(ui::VirtualKey::kEscape);
-  io.KeyMap[ImGuiKey_A] = int(ui::VirtualKey::kA);
-  io.KeyMap[ImGuiKey_C] = int(ui::VirtualKey::kC);
-  io.KeyMap[ImGuiKey_V] = int(ui::VirtualKey::kV);
-  io.KeyMap[ImGuiKey_X] = int(ui::VirtualKey::kX);
-  io.KeyMap[ImGuiKey_Y] = int(ui::VirtualKey::kY);
-  io.KeyMap[ImGuiKey_Z] = int(ui::VirtualKey::kZ);
-
   frame_time_tick_frequency_ = double(Clock::QueryHostTickFrequency());
   last_frame_time_ticks_ = Clock::QueryHostTickCount();
+
+  touch_pointer_id_ = TouchEvent::kPointerIDNone;
+  reset_mouse_position_after_next_frame_ = false;
+}
+
+std::optional<ImGuiKey> ImGuiDrawer::VirtualKeyToImGuiKey(VirtualKey vkey) {
+  static const std::map<VirtualKey, ImGuiKey> map = {
+      {ui::VirtualKey::kTab, ImGuiKey_Tab},
+      {ui::VirtualKey::kLeft, ImGuiKey_LeftArrow},
+      {ui::VirtualKey::kRight, ImGuiKey_RightArrow},
+      {ui::VirtualKey::kUp, ImGuiKey_UpArrow},
+      {ui::VirtualKey::kDown, ImGuiKey_DownArrow},
+      {ui::VirtualKey::kHome, ImGuiKey_Home},
+      {ui::VirtualKey::kEnd, ImGuiKey_End},
+      {ui::VirtualKey::kDelete, ImGuiKey_Delete},
+      {ui::VirtualKey::kBack, ImGuiKey_Backspace},
+      {ui::VirtualKey::kReturn, ImGuiKey_Enter},
+      {ui::VirtualKey::kEscape, ImGuiKey_Escape},
+      {ui::VirtualKey::kA, ImGuiKey_A},
+      {ui::VirtualKey::kC, ImGuiKey_C},
+      {ui::VirtualKey::kV, ImGuiKey_V},
+      {ui::VirtualKey::kX, ImGuiKey_X},
+      {ui::VirtualKey::kY, ImGuiKey_Y},
+      {ui::VirtualKey::kZ, ImGuiKey_Z},
+  };
+  if (auto search = map.find(vkey); search != map.end()) {
+    return search->second;
+  } else {
+    return std::nullopt;
+  }
 }
 
 void ImGuiDrawer::SetupFontTexture() {
@@ -297,7 +300,7 @@ void ImGuiDrawer::Draw(UIDrawContext& ui_draw_context) {
 
   ImGui::NewFrame();
 
-  assert_true(dialog_loop_next_index_ == SIZE_MAX);
+  assert_true(!IsDrawingDialogs());
   dialog_loop_next_index_ = 0;
   while (dialog_loop_next_index_ < dialogs_.size()) {
     dialogs_[dialog_loop_next_index_++]->Draw();
@@ -310,11 +313,16 @@ void ImGuiDrawer::Draw(UIDrawContext& ui_draw_context) {
     RenderDrawLists(draw_data, ui_draw_context);
   }
 
-  if (dialogs_.empty()) {
-    // All dialogs have removed themselves during the draw, detach.
-    presenter_->RemoveUIDrawerFromUIThread(this);
-    window_->RemoveInputListener(this);
-  } else {
+  if (reset_mouse_position_after_next_frame_) {
+    reset_mouse_position_after_next_frame_ = false;
+    io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+  }
+
+  // Detaching is deferred if the last dialog is removed during drawing, perform
+  // it now if needed.
+  DetachIfLastDialogRemoved();
+
+  if (!dialogs_.empty()) {
     // Repaint (and handle input) continuously if still active.
     presenter_->RequestUIPaintFromUIThread();
   }
@@ -337,14 +345,13 @@ void ImGuiDrawer::RenderDrawLists(ImDrawData* data,
     batch.index_count = cmd_list->IdxBuffer.size();
     immediate_drawer_->BeginDrawBatch(batch);
 
-    int index_offset = 0;
     for (int j = 0; j < cmd_list->CmdBuffer.size(); ++j) {
       const auto& cmd = cmd_list->CmdBuffer[j];
 
       ImmediateDraw draw;
       draw.primitive_type = ImmediatePrimitiveType::kTriangles;
       draw.count = cmd.ElemCount;
-      draw.index_offset = index_offset;
+      draw.index_offset = cmd.IdxOffset;
       draw.texture = reinterpret_cast<ImmediateTexture*>(cmd.TextureId);
       draw.scissor = true;
       draw.scissor_left = cmd.ClipRect.x;
@@ -352,8 +359,6 @@ void ImGuiDrawer::RenderDrawLists(ImDrawData* data,
       draw.scissor_right = cmd.ClipRect.z;
       draw.scissor_bottom = cmd.ClipRect.w;
       immediate_drawer_->Draw(draw);
-
-      index_offset += cmd.ElemCount;
     }
 
     immediate_drawer_->EndDrawBatch();
@@ -382,7 +387,7 @@ void ImGuiDrawer::OnKeyChar(KeyEvent& e) {
 }
 
 void ImGuiDrawer::OnMouseDown(MouseEvent& e) {
-  UpdateMousePosition(e);
+  SwitchToPhysicalMouseAndUpdateMousePosition(e);
   auto& io = GetIO();
   int button = -1;
   switch (e.button()) {
@@ -409,10 +414,12 @@ void ImGuiDrawer::OnMouseDown(MouseEvent& e) {
   }
 }
 
-void ImGuiDrawer::OnMouseMove(MouseEvent& e) { UpdateMousePosition(e); }
+void ImGuiDrawer::OnMouseMove(MouseEvent& e) {
+  SwitchToPhysicalMouseAndUpdateMousePosition(e);
+}
 
 void ImGuiDrawer::OnMouseUp(MouseEvent& e) {
-  UpdateMousePosition(e);
+  SwitchToPhysicalMouseAndUpdateMousePosition(e);
   auto& io = GetIO();
   int button = -1;
   switch (e.button()) {
@@ -440,33 +447,63 @@ void ImGuiDrawer::OnMouseUp(MouseEvent& e) {
 }
 
 void ImGuiDrawer::OnMouseWheel(MouseEvent& e) {
-  UpdateMousePosition(e);
+  SwitchToPhysicalMouseAndUpdateMousePosition(e);
   auto& io = GetIO();
   io.MouseWheel += float(e.scroll_y()) / float(MouseEvent::kScrollPerDetent);
 }
 
+void ImGuiDrawer::OnTouchEvent(TouchEvent& e) {
+  auto& io = GetIO();
+  TouchEvent::Action action = e.action();
+  uint32_t pointer_id = e.pointer_id();
+  if (action == TouchEvent::Action::kDown) {
+    // The latest pointer needs to be controlling the ImGui mouse.
+    if (touch_pointer_id_ == TouchEvent::kPointerIDNone) {
+      // Switching from the mouse to touch input.
+      if (ImGui::IsAnyMouseDown()) {
+        std::memset(io.MouseDown, 0, sizeof(io.MouseDown));
+        window_->ReleaseMouse();
+      }
+    }
+    touch_pointer_id_ = pointer_id;
+  } else {
+    if (pointer_id != touch_pointer_id_) {
+      return;
+    }
+  }
+  UpdateMousePosition(e.x(), e.y());
+  if (action == TouchEvent::Action::kUp ||
+      action == TouchEvent::Action::kCancel) {
+    io.MouseDown[0] = false;
+    touch_pointer_id_ = TouchEvent::kPointerIDNone;
+    // Make sure that after a touch, the ImGui mouse isn't hovering over
+    // anything.
+    reset_mouse_position_after_next_frame_ = true;
+  } else {
+    io.MouseDown[0] = true;
+    reset_mouse_position_after_next_frame_ = false;
+  }
+}
+
 void ImGuiDrawer::ClearInput() {
   auto& io = GetIO();
-  if (ImGui::IsAnyMouseDown()) {
+  if (touch_pointer_id_ == TouchEvent::kPointerIDNone &&
+      ImGui::IsAnyMouseDown()) {
     window_->ReleaseMouse();
   }
   io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
   std::memset(io.MouseDown, 0, sizeof(io.MouseDown));
-  io.MouseWheel = 0.0f;
-  io.MouseWheelH = 0.0f;
-  io.KeyCtrl = false;
-  io.KeyShift = false;
-  io.KeyAlt = false;
-  io.KeySuper = false;
-  std::memset(io.KeysDown, 0, sizeof(io.KeysDown));
+  io.ClearInputKeys();
   io.ClearInputCharacters();
+  touch_pointer_id_ = TouchEvent::kPointerIDNone;
+  reset_mouse_position_after_next_frame_ = false;
 }
 
 void ImGuiDrawer::OnKey(KeyEvent& e, bool is_down) {
   auto& io = GetIO();
-  VirtualKey virtual_key = e.virtual_key();
-  if (size_t(virtual_key) < xe::countof(io.KeysDown)) {
-    io.KeysDown[size_t(virtual_key)] = is_down;
+  const VirtualKey virtual_key = e.virtual_key();
+  if (auto imGuiKey = VirtualKeyToImGuiKey(virtual_key); imGuiKey) {
+    io.AddKeyEvent(*imGuiKey, is_down);
   }
   switch (virtual_key) {
     case VirtualKey::kShift:
@@ -487,12 +524,46 @@ void ImGuiDrawer::OnKey(KeyEvent& e, bool is_down) {
   }
 }
 
-void ImGuiDrawer::UpdateMousePosition(const MouseEvent& e) {
+void ImGuiDrawer::UpdateMousePosition(float x, float y) {
   auto& io = GetIO();
   float physical_to_logical =
       float(window_->GetMediumDpi()) / float(window_->GetDpi());
-  io.MousePos.x = e.x() * physical_to_logical;
-  io.MousePos.y = e.y() * physical_to_logical;
+  io.MousePos.x = x * physical_to_logical;
+  io.MousePos.y = y * physical_to_logical;
+}
+
+void ImGuiDrawer::SwitchToPhysicalMouseAndUpdateMousePosition(
+    const MouseEvent& e) {
+  if (touch_pointer_id_ != TouchEvent::kPointerIDNone) {
+    touch_pointer_id_ = TouchEvent::kPointerIDNone;
+    auto& io = GetIO();
+    std::memset(io.MouseDown, 0, sizeof(io.MouseDown));
+    // Nothing needs to be done regarding CaptureMouse and ReleaseMouse - all
+    // buttons as well as mouse capture have been released when switching to
+    // touch input, the mouse is never captured during touch input, and now
+    // resetting to no buttons down (therefore not capturing).
+  }
+  reset_mouse_position_after_next_frame_ = false;
+  UpdateMousePosition(float(e.x()), float(e.y()));
+}
+
+void ImGuiDrawer::DetachIfLastDialogRemoved() {
+  // IsDrawingDialogs() is also checked because in a situation of removing the
+  // only dialog, then adding a dialog, from within a dialog's Draw function,
+  // re-registering the ImGuiDrawer may result in ImGui being drawn multiple
+  // times in the current frame.
+  if (!dialogs_.empty() || IsDrawingDialogs()) {
+    return;
+  }
+  if (presenter_) {
+    presenter_->RemoveUIDrawerFromUIThread(this);
+  }
+  window_->RemoveInputListener(this);
+  // Clear all input since no input will be received anymore, and when the
+  // drawer becomes active again, it'd have an outdated input state otherwise
+  // which will be persistent until new events actualize individual input
+  // properties.
+  ClearInput();
 }
 
 }  // namespace ui

@@ -107,8 +107,9 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
            !cvars::snorm16_render_target_full_range;
   }
 
-  DepthFloat24Conversion depth_float24_conversion() const {
-    return depth_float24_conversion_;
+  bool depth_float24_round() const { return depth_float24_round_; }
+  bool depth_float24_convert_in_pixel_shader() const {
+    return depth_float24_convert_in_pixel_shader_;
   }
 
   DXGI_FORMAT GetColorResourceDXGIFormat(
@@ -468,16 +469,13 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
       // All in tiles.
       uint32_t dest_pitch : xenos::kEdramPitchTilesBits;
       uint32_t source_pitch : xenos::kEdramPitchTilesBits;
-      // Safe to use 12 bits for signed difference - no ownership transfer can
-      // ever occur between render targets with EDRAM base >= 2048 as this would
-      // result in 0-length spans. 10 + 10 + 12 is exactly 32, any more bits,
-      // and more root 32-bit constants will be used.
       // Destination base in tiles minus source base in tiles (not vice versa
       // because this is a transform of the coordinate system, not addresses
       // themselves).
+      // + 1 bit because this is a signed difference between two EDRAM bases.
       // 0 for host_depth_source_is_copy (ignored in this case anyway as
       // destination == source anyway).
-      int32_t source_to_dest : xenos::kEdramBaseTilesBits;
+      int32_t source_to_dest : xenos::kEdramBaseTilesBits + 1;
     };
     TransferAddressConstant() : constant(0) {
       static_assert_size(*this, sizeof(constant));
@@ -496,7 +494,7 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
     TransferInvocation(const Transfer& transfer,
                        const TransferShaderKey& shader_key)
         : transfer(transfer), shader_key(shader_key) {}
-    bool operator<(const TransferInvocation& other_invocation) {
+    bool operator<(const TransferInvocation& other_invocation) const {
       // TODO(Triang3l): See if it may be better to sort by the source in the
       // first place, especially when reading the same data multiple times (like
       // to write the stencil bits after depth) for better read locality.
@@ -575,7 +573,9 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   union DumpOffsets {
     uint32_t offsets;
     struct {
-      uint32_t dispatch_first_tile : xenos::kEdramBaseTilesBits;
+      // May be beyond the EDRAM tile count in case of EDRAM addressing
+      // wrapping, thus + 1 bit.
+      uint32_t dispatch_first_tile : xenos::kEdramBaseTilesBits + 1;
       uint32_t source_base_tiles : xenos::kEdramBaseTilesBits;
     };
     DumpOffsets() : offsets(0) { static_assert_size(*this, sizeof(offsets)); }
@@ -638,7 +638,7 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
     DumpInvocation(const ResolveCopyDumpRectangle& rectangle,
                    const DumpPipelineKey& pipeline_key)
         : rectangle(rectangle), pipeline_key(pipeline_key) {}
-    bool operator<(const DumpInvocation& other_invocation) {
+    bool operator<(const DumpInvocation& other_invocation) const {
       // Sort by the pipeline key primarily to reduce pipeline state (context)
       // switches.
       if (pipeline_key != other_invocation.pipeline_key) {
@@ -720,8 +720,8 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
 
   bool gamma_render_target_as_srgb_ = false;
 
-  DepthFloat24Conversion depth_float24_conversion_ =
-      DepthFloat24Conversion::kOnCopy;
+  bool depth_float24_round_ = false;
+  bool depth_float24_convert_in_pixel_shader_ = false;
 
   bool msaa_2x_supported_ = false;
 

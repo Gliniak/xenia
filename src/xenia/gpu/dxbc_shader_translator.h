@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2018 Ben Vanik. All rights reserved.                             *
+ * Copyright 2022 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -55,11 +55,65 @@ class DxbcShaderTranslator : public ShaderTranslator {
                        bool force_emit_source_map = false);
   ~DxbcShaderTranslator() override;
 
+  // Stage linkage ordering and rules (must be respected not only within the
+  // DxbcShaderTranslator, but also by everything else between the VS and the
+  // PS, such as geometry shaders for primitive types, and built-in pixel
+  // shaders for processing the fragment depth when there's no guest pixel
+  // shader):
+  //
+  // Note that VS means the guest VS here - can be VS or DS on the host. RS
+  // means the fixed-function rasterizer.
+  //
+  // The beginning of the parameters must match between the output of the
+  // producing stage and the input of the consuming stage, while the tail can be
+  // stage-specific or cut off.
+  //
+  // - Interpolators (TEXCOORD) - VS > GS > RS > PS, used interpolators are all
+  //   unconditionally referenced in all these stages.
+  // - Point coordinates (XESPRITETEXCOORD) - GS > RS > PS, must be present in
+  //   none or in all, if drawing points, and PsParamGen is used.
+  // - Position (SV_Position) - VS > GS > RS > PS, used in PS if actually needed
+  //   for something (PsParamGen, alpha to coverage when oC0 is written, depth
+  //   conversion, ROV render backend), the presence in PS depends on the usage
+  //   within the PS, not on linkage, therefore it's the last in PS so it can be
+  //   dropped from PS without effect on linkage.
+  // - Clip distances (SV_ClipDistance) - VS > GS > RS.
+  // - Cull distances (SV_CullDistance) - VS > RS or VS > GS.
+  // - Vertex kill AND operator (SV_CullDistance) - VS > RS or VS > GS.
+  // - Point size (XEPSIZE) - VS > GS.
+  //
+  // Therefore, for the direct VS > PS path, the parameters may be the
+  // following:
+  // - Shared between VS and PS:
+  //   - Interpolators (TEXCOORD).
+  //   - Position (SV_Position).
+  // - VS output only:
+  //   - Clip distances (SV_ClipDistance).
+  //   - Cull distances (SV_CullDistance).
+  //   - Vertex kill AND operator (SV_CullDistance).
+  //
+  // When a GS is also used, the path between the VS and the GS is:
+  // - Shared between VS and GS:
+  //   - Interpolators (TEXCOORD).
+  //   - Position (SV_Position).
+  //   - Clip distances (SV_ClipDistance).
+  //   - Cull distances (SV_CullDistance).
+  //   - Vertex kill AND operator (SV_CullDistance).
+  //   - Point size (XEPSIZE).
+  //
+  // Then, between GS and PS, it's:
+  // - Shared between GS and PS:
+  //   - Interpolators (TEXCOORD).
+  //   - Point coordinates (XESPRITETEXCOORD).
+  //   - Position (SV_Position).
+  // - GS output only:
+  //   - Clip distances (SV_ClipDistance).
+
   union Modification {
     // If anything in this is structure is changed in a way not compatible with
     // the previous layout, invalidate the pipeline storages by increasing this
     // version number (0xYYYYMMDD)!
-    static constexpr uint32_t kVersion = 0x20210425;
+    static constexpr uint32_t kVersion = 0x20220720;
 
     enum class DepthStencilMode : uint32_t {
       kNoModifiers,
@@ -89,21 +143,54 @@ class DxbcShaderTranslator : public ShaderTranslator {
 
     uint64_t value;
     struct VertexShaderModification {
+      // uint32_t 0.
+      // Interpolators written by the vertex shader and needed by the pixel
+      // shader.
+      uint32_t interpolator_mask : xenos::kMaxInterpolators;
+      uint32_t user_clip_plane_count : 3;
+      uint32_t user_clip_plane_cull : 1;
+      // Whether vertex killing with the "and" operator is used, and one more
+      // SV_CullDistance needs to be written.
+      uint32_t vertex_kill_and : 1;
+      uint32_t output_point_size : 1;
       // Dynamically indexable register count from SQ_PROGRAM_CNTL.
       uint32_t dynamic_addressable_register_count : 8;
+      uint32_t : 2;
+      // uint32_t 1.
       // Pipeline stage and input configuration.
       Shader::HostVertexShaderType host_vertex_shader_type
           : Shader::kHostVertexShaderTypeBitCount;
     } vertex;
     struct PixelShaderModification {
+      // uint32_t 0.
+      // Interpolators written by the vertex shader and needed by the pixel
+      // shader.
+      uint32_t interpolator_mask : xenos::kMaxInterpolators;
+      uint32_t interpolators_centroid : xenos::kMaxInterpolators;
+      // uint32_t 1.
       // Dynamically indexable register count from SQ_PROGRAM_CNTL.
+      uint32_t param_gen_enable : 1;
+      uint32_t param_gen_interpolator : 4;
+      // If param_gen_enable is set, this must be set for point primitives, and
+      // must not be set for other primitive types - enables the point sprite
+      // coordinates input, and also effects the flag bits in PsParamGen.
+      uint32_t param_gen_point : 1;
       uint32_t dynamic_addressable_register_count : 8;
       // Non-ROV - depth / stencil output mode.
       DepthStencilMode depth_stencil_mode : 2;
     } pixel;
 
-    Modification(uint64_t modification_value = 0) : value(modification_value) {
+    explicit Modification(uint64_t modification_value = 0)
+        : value(modification_value) {
       static_assert_size(*this, sizeof(value));
+    }
+
+    uint32_t GetVertexClipDistanceCount() const {
+      return vertex.user_clip_plane_cull ? 0 : vertex.user_clip_plane_count;
+    }
+    uint32_t GetVertexCullDistanceCount() const {
+      return (vertex.user_clip_plane_cull ? vertex.user_clip_plane_count : 0) +
+             vertex.vertex_kill_and;
     }
   };
 
@@ -122,15 +209,7 @@ class DxbcShaderTranslator : public ShaderTranslator {
     kSysFlag_XYDividedByW_Shift,
     kSysFlag_ZDividedByW_Shift,
     kSysFlag_WNotReciprocal_Shift,
-    kSysFlag_UserClipPlane0_Shift,
-    kSysFlag_UserClipPlane1_Shift,
-    kSysFlag_UserClipPlane2_Shift,
-    kSysFlag_UserClipPlane3_Shift,
-    kSysFlag_UserClipPlane4_Shift,
-    kSysFlag_UserClipPlane5_Shift,
-    kSysFlag_KillIfAnyVertexKilled_Shift,
     kSysFlag_PrimitivePolygonal_Shift,
-    kSysFlag_PrimitivePoint_Shift,
     kSysFlag_PrimitiveLine_Shift,
     kSysFlag_DepthFloat24_Shift,
     kSysFlag_AlphaPassIfLess_Shift,
@@ -167,15 +246,7 @@ class DxbcShaderTranslator : public ShaderTranslator {
     kSysFlag_XYDividedByW = 1u << kSysFlag_XYDividedByW_Shift,
     kSysFlag_ZDividedByW = 1u << kSysFlag_ZDividedByW_Shift,
     kSysFlag_WNotReciprocal = 1u << kSysFlag_WNotReciprocal_Shift,
-    kSysFlag_UserClipPlane0 = 1u << kSysFlag_UserClipPlane0_Shift,
-    kSysFlag_UserClipPlane1 = 1u << kSysFlag_UserClipPlane1_Shift,
-    kSysFlag_UserClipPlane2 = 1u << kSysFlag_UserClipPlane2_Shift,
-    kSysFlag_UserClipPlane3 = 1u << kSysFlag_UserClipPlane3_Shift,
-    kSysFlag_UserClipPlane4 = 1u << kSysFlag_UserClipPlane4_Shift,
-    kSysFlag_UserClipPlane5 = 1u << kSysFlag_UserClipPlane5_Shift,
-    kSysFlag_KillIfAnyVertexKilled = 1u << kSysFlag_KillIfAnyVertexKilled_Shift,
     kSysFlag_PrimitivePolygonal = 1u << kSysFlag_PrimitivePolygonal_Shift,
-    kSysFlag_PrimitivePoint = 1u << kSysFlag_PrimitivePoint_Shift,
     kSysFlag_PrimitiveLine = 1u << kSysFlag_PrimitiveLine_Shift,
     kSysFlag_DepthFloat24 = 1u << kSysFlag_DepthFloat24_Shift,
     kSysFlag_AlphaPassIfLess = 1u << kSysFlag_AlphaPassIfLess_Shift,
@@ -195,19 +266,6 @@ class DxbcShaderTranslator : public ShaderTranslator {
         1u << kSysFlag_ROVDepthStencilEarlyWrite_Shift,
   };
   static_assert(kSysFlag_Count <= 32, "Too many flags in the system constants");
-
-  // Appended to the format in the format constant.
-  enum : uint32_t {
-    // Starting from bit 4 because the format itself needs 4 bits.
-    kRTFormatFlag_64bpp_Shift = 4,
-    // Requires clamping of blending sources and factors.
-    kRTFormatFlag_FixedPointColor_Shift,
-    kRTFormatFlag_FixedPointAlpha_Shift,
-
-    kRTFormatFlag_64bpp = 1u << kRTFormatFlag_64bpp_Shift,
-    kRTFormatFlag_FixedPointColor = 1u << kRTFormatFlag_FixedPointColor_Shift,
-    kRTFormatFlag_FixedPointAlpha = 1u << kRTFormatFlag_FixedPointAlpha_Shift,
-  };
 
   // IF SYSTEM CONSTANTS ARE CHANGED OR ADDED, THE FOLLOWING MUST BE UPDATED:
   // - SystemConstants::Index enum.
@@ -247,12 +305,6 @@ class DxbcShaderTranslator : public ShaderTranslator {
     // for the host viewport.
     float point_screen_diameter_to_ndc_radius[2];
 
-    uint32_t interpolator_sampling_pattern;
-    uint32_t ps_param_gen;
-    // Log2 of X and Y sample size. Used for alpha to mask, and for MSAA with
-    // ROV, this is used for EDRAM address calculation.
-    uint32_t sample_count_log2[2];
-
     // Each byte contains post-swizzle TextureSign values for each of the needed
     // components of each of the 32 used texture fetch constants.
     uint32_t texture_swizzled_signs[8];
@@ -260,12 +312,18 @@ class DxbcShaderTranslator : public ShaderTranslator {
     // Whether the contents of each texture in fetch constants comes from a
     // resolve operation.
     uint32_t textures_resolved;
+    // Log2 of X and Y sample size. Used for alpha to mask, and for MSAA with
+    // ROV, this is used for EDRAM address calculation.
+    uint32_t sample_count_log2[2];
     float alpha_test_reference;
+
     // If alpha to mask is disabled, the entire alpha_to_mask value must be 0.
     // If alpha to mask is enabled, bits 0:7 are sample offsets, and bit 8 must
     // be 1.
     uint32_t alpha_to_mask;
     uint32_t edram_32bpp_tile_pitch_dwords_scaled;
+    uint32_t edram_depth_base_dwords_scaled;
+    uint32_t padding_edram_depth_base_dwords_scaled;
 
     float color_exp_bias[4];
 
@@ -283,9 +341,6 @@ class DxbcShaderTranslator : public ShaderTranslator {
       };
       float edram_poly_offset_back[2];
     };
-
-    uint32_t edram_depth_base_dwords_scaled;
-    uint32_t padding_edram_depth_base_dwords_scaled[3];
 
     // In stencil function/operations (they match the layout of the
     // function/operations in RB_DEPTHCONTROL):
@@ -315,7 +370,8 @@ class DxbcShaderTranslator : public ShaderTranslator {
 
     uint32_t edram_rt_base_dwords_scaled[4];
 
-    // RT format combined with kRTFormatFlags.
+    // RT format combined with RenderTargetCache::kPSIColorFormatFlag values
+    // (pass via RenderTargetCache::AddPSIColorFormatFlags).
     uint32_t edram_rt_format_flags[4];
 
     // Format info - values to clamp the color to before blending or storing.
@@ -360,23 +416,20 @@ class DxbcShaderTranslator : public ShaderTranslator {
       kPointConstantDiameter,
       kPointScreenDiameterToNDCRadius,
 
-      kInterpolatorSamplingPattern,
-      kPSParamGen,
-      kSampleCountLog2,
-
       kTextureSwizzledSigns,
 
       kTexturesResolved,
+      kSampleCountLog2,
       kAlphaTestReference,
+
       kAlphaToMask,
       kEdram32bppTilePitchDwordsScaled,
+      kEdramDepthBaseDwordsScaled,
 
       kColorExpBias,
 
       kEdramPolyOffsetFront,
       kEdramPolyOffsetBack,
-
-      kEdramDepthBaseDwordsScaled,
 
       kEdramStencil,
 
@@ -459,40 +512,6 @@ class DxbcShaderTranslator : public ShaderTranslator {
     kEdram,
   };
 
-  // Returns the format with internal flags for passing via the
-  // edram_rt_format_flags system constant.
-  static constexpr uint32_t ROV_AddColorFormatFlags(
-      xenos::ColorRenderTargetFormat format) {
-    uint32_t format_flags = uint32_t(format);
-    if (format == xenos::ColorRenderTargetFormat::k_16_16_16_16 ||
-        format == xenos::ColorRenderTargetFormat::k_16_16_16_16_FLOAT ||
-        format == xenos::ColorRenderTargetFormat::k_32_32_FLOAT) {
-      format_flags |= kRTFormatFlag_64bpp;
-    }
-    if (format == xenos::ColorRenderTargetFormat::k_8_8_8_8 ||
-        format == xenos::ColorRenderTargetFormat::k_8_8_8_8_GAMMA ||
-        format == xenos::ColorRenderTargetFormat::k_2_10_10_10 ||
-        format == xenos::ColorRenderTargetFormat::k_16_16 ||
-        format == xenos::ColorRenderTargetFormat::k_16_16_16_16 ||
-        format == xenos::ColorRenderTargetFormat::k_2_10_10_10_AS_10_10_10_10) {
-      format_flags |=
-          kRTFormatFlag_FixedPointColor | kRTFormatFlag_FixedPointAlpha;
-    } else if (format == xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT ||
-               format == xenos::ColorRenderTargetFormat::
-                             k_2_10_10_10_FLOAT_AS_16_16_16_16) {
-      format_flags |= kRTFormatFlag_FixedPointAlpha;
-    }
-    return format_flags;
-  }
-  // Returns the bits that need to be added to the RT flags constant - needs to
-  // be done externally, not in SetColorFormatConstants, because the flags
-  // contain other state.
-  static void ROV_GetColorFormatSystemConstants(
-      xenos::ColorRenderTargetFormat format, uint32_t write_mask,
-      float& clamp_rgb_low, float& clamp_alpha_low, float& clamp_rgb_high,
-      float& clamp_alpha_high, uint32_t& keep_mask_low,
-      uint32_t& keep_mask_high);
-
   uint64_t GetDefaultVertexShaderModification(
       uint32_t dynamic_addressable_register_count,
       Shader::HostVertexShaderType host_vertex_shader_type =
@@ -533,13 +552,14 @@ class DxbcShaderTranslator : public ShaderTranslator {
                            uint32_t temp2_temp_component);
   // Converts the depth value externally clamped to the representable [0, 2)
   // range to 20e4 floating point, with zeros in bits 24:31, rounding to the
-  // nearest even. Source and destination may be the same, temporary must be
-  // different than both. If remap_from_0_to_0_5 is true, it's assumed that
-  // 0...1 is pre-remapped to 0...0.5 in the input.
+  // nearest even or towards zero. Source and destination may be the same,
+  // temporary must be different than both. If remap_from_0_to_0_5 is true, it's
+  // assumed that 0...1 is pre-remapped to 0...0.5 in the input.
   static void PreClampedDepthTo20e4(
       dxbc::Assembler& a, uint32_t f24_temp, uint32_t f24_temp_component,
       uint32_t f32_temp, uint32_t f32_temp_component, uint32_t temp_temp,
-      uint32_t temp_temp_component, bool remap_from_0_to_0_5);
+      uint32_t temp_temp_component, bool round_to_nearest_even,
+      bool remap_from_0_to_0_5);
   // Converts the 20e4 number in bits [f24_shift, f24_shift + 10) to a 32-bit
   // float. Two temporaries must be different, but one can be the same as the
   // source. The destination may be anything writable. If remap_to_0_to_0_5 is
@@ -578,34 +598,10 @@ class DxbcShaderTranslator : public ShaderTranslator {
   void ProcessAluInstruction(const ParsedAluInstruction& instr) override;
 
  private:
-  static constexpr uint32_t kPointParametersTexCoord = xenos::kMaxInterpolators;
-
-  enum class InOutRegister : uint32_t {
-    // IF ANY OF THESE ARE CHANGED, WriteInputSignature and WriteOutputSignature
-    // MUST BE UPDATED!
-    kVSInVertexIndex = 0,
-
-    kDSInControlPointIndex = 0,
-
-    kVSDSOutInterpolators = 0,
-    kVSDSOutPointParameters = kVSDSOutInterpolators + xenos::kMaxInterpolators,
-    kVSDSOutPosition,
-    // Clip and cull distances must be tightly packed in Direct3D!
-    kVSDSOutClipDistance0123,
-    kVSDSOutClipDistance45AndCullDistance,
-    // TODO(Triang3l): Use SV_CullDistance instead for
-    // PA_CL_CLIP_CNTL::UCP_CULL_ONLY_ENA, but can't have more than 8 clip and
-    // cull distances in total. Currently only using SV_CullDistance for vertex
-    // kill.
-
-    kPSInInterpolators = 0,
-    kPSInPointParameters = kPSInInterpolators + xenos::kMaxInterpolators,
-    kPSInPosition,
-    // nointerpolation inputs. SV_IsFrontFace (X) is always present for
-    // ps_param_gen, SV_SampleIndex (Y) is conditional (only for memexport when
-    // sample-rate shading is otherwise needed anyway due to depth conversion).
-    kPSInFrontFaceAndSampleIndex,
-  };
+  // IF ANY OF THESE ARE CHANGED, WriteInputSignature and WriteOutputSignature
+  // MUST BE UPDATED!
+  static constexpr uint32_t kInRegisterVSVertexIndex = 0;
+  static constexpr uint32_t kInRegisterDSControlPointIndex = 0;
 
   // GetSystemConstantSrc + MarkSystemConstantUsed is for special cases of
   // building the source unconditionally - in general, LoadSystemConstant must
@@ -653,6 +649,20 @@ class DxbcShaderTranslator : public ShaderTranslator {
     return is_vertex_shader() &&
            Shader::IsHostVertexShaderTypeDomain(
                GetDxbcShaderModification().vertex.host_vertex_shader_type);
+  }
+
+  bool IsForceEarlyDepthStencilGlobalFlagEnabled() const {
+    return is_pixel_shader() &&
+           GetDxbcShaderModification().pixel.depth_stencil_mode ==
+               Modification::DepthStencilMode::kEarlyHint &&
+           !edram_rov_used_ &&
+           current_shader().implicit_early_z_write_allowed();
+  }
+
+  uint32_t GetModificationInterpolatorMask() const {
+    Modification modification = GetDxbcShaderModification();
+    return is_vertex_shader() ? modification.vertex.interpolator_mask
+                              : modification.pixel.interpolator_mask;
   }
 
   // Whether to use switch-case rather than if (pc >= label) for control flow.
@@ -716,6 +726,7 @@ class DxbcShaderTranslator : public ShaderTranslator {
   // Whether it's possible and worth skipping running the translated shader for
   // 2x2 quads.
   bool ROV_IsDepthStencilEarly() const {
+    assert_true(edram_rov_used_);
     return !is_depth_only_pixel_shader_ && !current_shader().writes_depth() &&
            !current_shader().is_valid_memexport_used();
   }
@@ -1033,11 +1044,24 @@ class DxbcShaderTranslator : public ShaderTranslator {
   // so the remaining ones can be marked as unused in RDEF.
   uint64_t system_constants_used_;
 
+  uint32_t out_reg_vs_interpolators_;
+  uint32_t out_reg_vs_position_;
+  // Clip and cull distances must be tightly packed in Direct3D.
+  // Up to 6 SV_ClipDistances or SV_CullDistances depending on
+  // user_clip_plane_cull, then one SV_CullDistance if vertex_kill_and is used.
+  uint32_t out_reg_vs_clip_cull_distances_;
+  uint32_t out_reg_vs_point_size_;
+  uint32_t in_reg_ps_interpolators_;
+  uint32_t in_reg_ps_point_coordinates_;
+  uint32_t in_reg_ps_position_;
+  // nointerpolation inputs. SV_IsFrontFace (X) is for non-point PsParamGen,
+  // SV_SampleIndex (Y) is for memexport when sample-rate shading is otherwise
+  // needed anyway due to depth conversion.
+  uint32_t in_reg_ps_front_face_sample_index_;
+
   // Mask of domain location actually used in the domain shader.
   uint32_t in_domain_location_used_;
-  // Whether the primitive ID has been used in the domain shader.
-  bool in_primitive_id_used_;
-  // Whether InOutRegister::kDSInControlPointIndex has been used in the shader.
+  // Whether kInRegisterDSControlPointIndex has been used in the shader.
   bool in_control_point_index_used_;
   // Mask of the pixel/sample position actually used in the pixel shader.
   uint32_t in_position_used_;
@@ -1072,7 +1096,9 @@ class DxbcShaderTranslator : public ShaderTranslator {
   // 8:11 - Whether color buffers have been written to, if not written on the
   //        taken execution path, don't export according to Direct3D 9 register
   //        documentation (some games rely on this behavior).
-  // Y - Absolute resolution-scaled EDRAM offset for depth / stencil, in dwords.
+  // Y - Absolute resolution-scaled EDRAM offset for depth / stencil, in dwords,
+  //     before and during depth testing. During color writing, when the depth /
+  //     stencil address is not needed anymore, current color sample address.
   // Z - Base-relative resolution-scaled EDRAM offset for 32bpp color data, in
   //     dwords.
   // W - Base-relative resolution-scaled EDRAM offset for 64bpp color data, in

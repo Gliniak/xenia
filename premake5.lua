@@ -141,6 +141,12 @@ filter("platforms:Android-*")
   systemversion("24")
   cppstl("c++")
   staticruntime("On")
+  -- Hidden visibility is needed to prevent dynamic relocations in FFmpeg
+  -- AArch64 Neon libavcodec assembly with PIC (accesses extern lookup tables
+  -- using `adrp` and `add`, without the Global Object Table, expecting that all
+  -- FFmpeg symbols that aren't a part of the FFmpeg API are hidden by FFmpeg's
+  -- original build system) by resolving those relocations at link time instead.
+  visibility("Hidden")
   links({
     "android",
     "dl",
@@ -247,7 +253,6 @@ workspace("xenia")
   include("third_party/imgui.lua")
   include("third_party/mspack.lua")
   include("third_party/snappy.lua")
-  include("third_party/spirv-tools.lua")
   include("third_party/xxhash.lua")
 
   if not os.istarget("android") then
@@ -273,6 +278,7 @@ workspace("xenia")
   end
 
   include("src/xenia")
+  include("src/xenia/app")
   include("src/xenia/app/discord")
   include("src/xenia/apu")
   include("src/xenia/apu/nop")
@@ -287,7 +293,6 @@ workspace("xenia")
   include("src/xenia/hid/nop")
   include("src/xenia/kernel")
   include("src/xenia/ui")
-  include("src/xenia/ui/spirv")
   include("src/xenia/ui/vulkan")
   include("src/xenia/vfs")
 
@@ -295,10 +300,6 @@ workspace("xenia")
     include("src/xenia/apu/sdl")
     include("src/xenia/helper/sdl")
     include("src/xenia/hid/sdl")
-
-    -- TODO(Triang3l): src/xenia/app has a dependency on xenia-helper-sdl, bring
-    -- it back later.
-    include("src/xenia/app")
   end
 
   if os.istarget("windows") then

@@ -28,11 +28,11 @@
 
 // Very prominent in 545407F2.
 DEFINE_bool(
-    resolve_resolution_scale_duplicate_second_pixel, true,
-    "When using resolution scale, apply the hack that duplicates the "
-    "right/lower host pixel in the left and top sides of render target resolve "
-    "areas to eliminate the gap caused by half-pixel offset (this is necessary "
-    "for certain games to display the scene graphics).",
+    resolve_resolution_scale_fill_half_pixel_offset, true,
+    "When using resolution scaling, apply the hack that stretches the first "
+    "surely covered host pixel in the left and top sides of render target "
+    "resolve areas to eliminate the gap caused by the half-pixel offset (this "
+    "is necessary for certain games to display the scene graphics).",
     "GPU");
 
 namespace xe {
@@ -532,8 +532,10 @@ void GetHostViewportInfo(const RegisterFile& regs,
       // interpolated Z instead if conversion can't be done exactly, without
       // modifying clipping bounds by adjusting Z in vertex shaders, as that
       // may cause polygons placed explicitly at Z = 0 or Z = W to be clipped.
-      z_min = xenos::Float20e4To32(xenos::Float32To20e4(z_min));
-      z_max = xenos::Float20e4To32(xenos::Float32To20e4(z_max));
+      // Rounding the bounds to the nearest even regardless of the depth
+      // rounding mode not to add even more error by truncating twice.
+      z_min = xenos::Float20e4To32(xenos::Float32To20e4(z_min, true));
+      z_max = xenos::Float20e4To32(xenos::Float32To20e4(z_max, true));
     }
     if (full_float24_in_0_to_1) {
       // Remap the full [0...2) float24 range to [0...1) support data round-trip
@@ -574,11 +576,11 @@ void GetScissor(const RegisterFile& regs, Scissor& scissor_out,
   // Screen scissor is not used by Direct3D 9 (always 0, 0 to 8192, 8192), but
   // still handled here for completeness.
   auto pa_sc_screen_scissor_tl = regs.Get<reg::PA_SC_SCREEN_SCISSOR_TL>();
-  tl_x = std::max(tl_x, pa_sc_screen_scissor_tl.tl_x);
-  tl_y = std::max(tl_y, pa_sc_screen_scissor_tl.tl_y);
+  tl_x = std::max(tl_x, int32_t(pa_sc_screen_scissor_tl.tl_x));
+  tl_y = std::max(tl_y, int32_t(pa_sc_screen_scissor_tl.tl_y));
   auto pa_sc_screen_scissor_br = regs.Get<reg::PA_SC_SCREEN_SCISSOR_BR>();
-  br_x = std::min(br_x, pa_sc_screen_scissor_br.br_x);
-  br_y = std::min(br_y, pa_sc_screen_scissor_br.br_y);
+  br_x = std::min(br_x, int32_t(pa_sc_screen_scissor_br.br_x));
+  br_y = std::min(br_y, int32_t(pa_sc_screen_scissor_br.br_y));
   if (clamp_to_surface_pitch) {
     // Clamp the horizontal scissor to surface_pitch for safety, in case that's
     // not done by the guest for some reason (it's not when doing draws without
@@ -649,31 +651,6 @@ uint32_t GetNormalizedColorMask(const RegisterFile& regs,
   return normalized_color_mask;
 }
 
-void GetEdramTileWidthDivideScaleAndUpperShift(
-    uint32_t draw_resolution_scale_x, uint32_t& divide_scale_out,
-    uint32_t& divide_upper_shift_out) {
-  static_assert(
-      TextureCache::kMaxDrawResolutionScaleAlongAxis <= 3,
-      "GetEdramTileWidthDivideScaleAndUpperShift provides values only for draw "
-      "resolution scaling factors of up to 3");
-  switch (draw_resolution_scale_x) {
-    case 1:
-      divide_scale_out = kDivideScale5;
-      divide_upper_shift_out = kDivideUpperShift5 + 4;
-      break;
-    case 2:
-      divide_scale_out = kDivideScale5;
-      divide_upper_shift_out = kDivideUpperShift5 + 5;
-      break;
-    case 3:
-      divide_scale_out = kDivideScale15;
-      divide_upper_shift_out = kDivideUpperShift15 + 4;
-      break;
-    default:
-      assert_unhandled_case(draw_resolution_scale_x);
-  }
-}
-
 xenos::CopySampleSelect SanitizeCopySampleSelect(
     xenos::CopySampleSelect copy_sample_select, xenos::MsaaSamples msaa_samples,
     bool is_depth) {
@@ -719,7 +696,8 @@ xenos::CopySampleSelect SanitizeCopySampleSelect(
 
 void GetResolveEdramTileSpan(ResolveEdramInfo edram_info,
                              ResolveCoordinateInfo coordinate_info,
-                             uint32_t& base_out, uint32_t& row_length_used_out,
+                             uint32_t height_div_8, uint32_t& base_out,
+                             uint32_t& row_length_used_out,
                              uint32_t& rows_out) {
   // Due to 64bpp, and also not to make an assumption that the offsets are
   // limited to (80 - 8, 8 - 8) with 2x MSAA, and (40 - 8, 8 - 8) with 4x MSAA,
@@ -739,8 +717,7 @@ void GetResolveEdramTileSpan(ResolveEdramInfo edram_info,
   uint32_t y0 = (coordinate_info.edram_offset_y_div_8 << y_scale_log2) /
                 xenos::kEdramTileHeightSamples;
   uint32_t y1 =
-      (((coordinate_info.edram_offset_y_div_8 + coordinate_info.height_div_8)
-        << y_scale_log2) +
+      (((coordinate_info.edram_offset_y_div_8 + height_div_8) << y_scale_log2) +
        (xenos::kEdramTileHeightSamples - 1)) /
       xenos::kEdramTileHeightSamples;
   base_out = edram_info.base_tiles + y0 * edram_info.pitch_tiles + x0;
@@ -764,8 +741,14 @@ const ResolveCopyShaderInfo
 bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
                     TraceWriter& trace_writer, uint32_t draw_resolution_scale_x,
                     uint32_t draw_resolution_scale_y,
-                    bool fixed_16_truncated_to_minus_1_to_1,
+                    bool fixed_rg16_truncated_to_minus_1_to_1,
+                    bool fixed_rgba16_truncated_to_minus_1_to_1,
                     ResolveInfo& info_out) {
+  // Don't pass uninitialized values to shaders, not to leak data to frame
+  // captures. Also initialize an invalid resolve to empty.
+  info_out.coordinate_info.packed = 0;
+  info_out.height_div_8 = 0;
+
   auto rb_copy_control = regs.Get<reg::RB_COPY_CONTROL>();
   info_out.rb_copy_control = rb_copy_control;
 
@@ -778,10 +761,6 @@ bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
     assert_always();
     return false;
   }
-
-  // Don't pass uninitialized values to shaders, not to leak data to frame
-  // captures.
-  info_out.coordinate_info.packed = 0;
 
   // Get the extent of pixels covered by the resolve rectangle, according to the
   // top-left rasterization rule.
@@ -898,11 +877,11 @@ bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
 
   info_out.coordinate_info.width_div_8 =
       uint32_t(x1 - x0) >> xenos::kResolveAlignmentPixelsLog2;
-  info_out.coordinate_info.height_div_8 =
+  info_out.height_div_8 =
       uint32_t(y1 - y0) >> xenos::kResolveAlignmentPixelsLog2;
-  // 2 bits for each.
-  assert_true(draw_resolution_scale_x <= 3);
-  assert_true(draw_resolution_scale_y <= 3);
+  // 3 bits for each.
+  assert_true(draw_resolution_scale_x <= 7);
+  assert_true(draw_resolution_scale_y <= 7);
   info_out.coordinate_info.draw_resolution_scale_x = draw_resolution_scale_x;
   info_out.coordinate_info.draw_resolution_scale_y = draw_resolution_scale_y;
 
@@ -1055,9 +1034,9 @@ bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
       base_offset_y_tiles * surface_pitch_tiles + base_offset_x_tiles;
 
   // Write the color/depth EDRAM info.
-  bool duplicate_second_pixel =
+  bool fill_half_pixel_offset =
       (draw_resolution_scale_x > 1 || draw_resolution_scale_y > 1) &&
-      cvars::resolve_resolution_scale_duplicate_second_pixel &&
+      cvars::resolve_resolution_scale_fill_half_pixel_offset &&
       cvars::half_pixel_offset && !regs.Get<reg::PA_SU_VTX_CNTL>().pix_center;
   int32_t exp_bias = is_depth ? 0 : rb_copy_dest_info.copy_dest_exp_bias;
   ResolveEdramInfo depth_edram_info;
@@ -1066,11 +1045,13 @@ bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
     depth_edram_info.pitch_tiles = surface_pitch_tiles;
     depth_edram_info.msaa_samples = rb_surface_info.msaa_samples;
     depth_edram_info.is_depth = 1;
+    // If wrapping happens, it's fine, it doesn't matter how many times and
+    // where modulo xenos::kEdramTileCount is applied in this context.
     depth_edram_info.base_tiles =
         rb_depth_info.depth_base + edram_base_offset_tiles;
     depth_edram_info.format = uint32_t(rb_depth_info.depth_format);
     depth_edram_info.format_is_64bpp = 0;
-    depth_edram_info.duplicate_second_pixel = uint32_t(duplicate_second_pixel);
+    depth_edram_info.fill_half_pixel_offset = uint32_t(fill_half_pixel_offset);
     info_out.depth_original_base = rb_depth_info.depth_base;
   } else {
     info_out.depth_original_base = 0;
@@ -1088,13 +1069,16 @@ bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
     color_edram_info.pitch_tiles = surface_pitch_tiles << is_64bpp;
     color_edram_info.msaa_samples = rb_surface_info.msaa_samples;
     color_edram_info.is_depth = 0;
+    // If wrapping happens, it's fine, it doesn't matter how many times and
+    // where modulo xenos::kEdramTileCount is applied in this context.
     color_edram_info.base_tiles =
         color_info.color_base + (edram_base_offset_tiles << is_64bpp);
     color_edram_info.format = uint32_t(color_info.color_format);
     color_edram_info.format_is_64bpp = is_64bpp;
-    color_edram_info.duplicate_second_pixel = uint32_t(duplicate_second_pixel);
-    if (fixed_16_truncated_to_minus_1_to_1 &&
-        (color_info.color_format == xenos::ColorRenderTargetFormat::k_16_16 ||
+    color_edram_info.fill_half_pixel_offset = uint32_t(fill_half_pixel_offset);
+    if ((fixed_rg16_truncated_to_minus_1_to_1 &&
+         color_info.color_format == xenos::ColorRenderTargetFormat::k_16_16) ||
+        (fixed_rgba16_truncated_to_minus_1_to_1 &&
          color_info.color_format ==
              xenos::ColorRenderTargetFormat::k_16_16_16_16)) {
       // The texture expects 0x8001 = -32, 0x7FFF = 32, but the hack making
@@ -1194,9 +1178,8 @@ ResolveCopyShaderIndex ResolveInfo::GetCopyShader(
     uint32_t width =
         (coordinate_info.width_div_8 << xenos::kResolveAlignmentPixelsLog2) *
         draw_resolution_scale_x;
-    uint32_t height =
-        (coordinate_info.height_div_8 << xenos::kResolveAlignmentPixelsLog2) *
-        draw_resolution_scale_y;
+    uint32_t height = (height_div_8 << xenos::kResolveAlignmentPixelsLog2) *
+                      draw_resolution_scale_y;
     const ResolveCopyShaderInfo& shader_info =
         resolve_copy_shader_info[size_t(shader)];
     group_count_x_out = (width + ((1 << shader_info.group_size_x_log2) - 1)) >>

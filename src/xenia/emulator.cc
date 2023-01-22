@@ -24,9 +24,10 @@
 #include "xenia/base/literals.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/mapped_memory.h"
+#include "xenia/base/platform.h"
 #include "xenia/base/string.h"
 #include "xenia/cpu/backend/code_cache.h"
-#include "xenia/cpu/backend/x64/x64_backend.h"
+#include "xenia/cpu/backend/null_backend.h"
 #include "xenia/cpu/cpu_flags.h"
 #include "xenia/cpu/thread_state.h"
 #include "xenia/gpu/graphics_system.h"
@@ -49,6 +50,12 @@
 #include "xenia/vfs/devices/null_device.h"
 #include "xenia/vfs/devices/stfs_container_device.h"
 #include "xenia/vfs/virtual_file_system.h"
+
+#if XE_ARCH_AMD64
+#include "xenia/cpu/backend/x64/x64_backend.h"
+#endif  // XE_ARCH
+
+DECLARE_int32(user_language);
 
 DEFINE_double(time_scalar, 1.0,
               "Scalar used to speed or slow time (1x, 2x, 1/2x, etc).",
@@ -127,6 +134,7 @@ Emulator::~Emulator() {
 
 X_STATUS Emulator::Setup(
     ui::Window* display_window, ui::ImGuiDrawer* imgui_drawer,
+    bool require_cpu_backend,
     std::function<std::unique_ptr<apu::AudioSystem>(cpu::Processor*)>
         audio_system_factory,
     std::function<std::unique_ptr<gpu::GraphicsSystem>()>
@@ -160,19 +168,20 @@ X_STATUS Emulator::Setup(
   export_resolver_ = std::make_unique<xe::cpu::ExportResolver>();
 
   std::unique_ptr<xe::cpu::backend::Backend> backend;
-  if (!backend) {
-#if defined(XENIA_HAS_X64_BACKEND) && XENIA_HAS_X64_BACKEND
-    if (cvars::cpu == "x64") {
+#if XE_ARCH_AMD64
+  if (cvars::cpu == "x64") {
+    backend.reset(new xe::cpu::backend::x64::X64Backend());
+  }
+#endif  // XE_ARCH
+  if (cvars::cpu == "any") {
+    if (!backend) {
+#if XE_ARCH_AMD64
       backend.reset(new xe::cpu::backend::x64::X64Backend());
+#endif  // XE_ARCH
     }
-#endif  // XENIA_HAS_X64_BACKEND
-    if (cvars::cpu == "any") {
-#if defined(XENIA_HAS_X64_BACKEND) && XENIA_HAS_X64_BACKEND
-      if (!backend) {
-        backend.reset(new xe::cpu::backend::x64::X64Backend());
-      }
-#endif  // XENIA_HAS_X64_BACKEND
-    }
+  }
+  if (!backend && !require_cpu_backend) {
+    backend.reset(new xe::cpu::backend::NullBackend());
   }
 
   // Initialize the CPU.
@@ -788,23 +797,28 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     }
     game_config_load_callback_loop_next_index_ = SIZE_MAX;
 
-    uint32_t resource_data = 0;
-    uint32_t resource_size = 0;
-    if (XSUCCEEDED(module->GetSection(title_id.c_str(), &resource_data,
-                                      &resource_size))) {
-      kernel::util::XdbfGameData db(
-          module->memory()->TranslateVirtual(resource_data), resource_size);
-      if (db.is_valid()) {
-        // TODO(gibbed): get title respective to user locale.
-        title_name_ = db.title(XLanguage::kEnglish);
-        if (title_name_.empty()) {
-          // If English title is unavailable, get the title in default locale.
-          title_name_ = db.title();
-        }
-        auto icon_block = db.icon();
-        if (icon_block) {
-          display_window_->SetIcon(icon_block.buffer, icon_block.size);
-        }
+    const kernel::util::XdbfGameData db = kernel_state_->module_xdbf(module);
+    if (db.is_valid()) {
+      XLanguage language =
+          db.GetExistingLanguage(static_cast<XLanguage>(cvars::user_language));
+      title_name_ = db.title(language);
+
+      XELOGI("-------------------- ACHIEVEMENTS --------------------");
+      const std::vector<kernel::util::XdbfAchievementTableEntry>
+          achievement_list = db.GetAchievements();
+      for (const kernel::util::XdbfAchievementTableEntry& entry :
+           achievement_list) {
+        std::string label = db.GetStringTableEntry(language, entry.label_id);
+        std::string desc =
+            db.GetStringTableEntry(language, entry.description_id);
+
+        XELOGI("{} - {} - {} - {}", entry.id, label, desc, entry.gamerscore);
+      }
+      XELOGI("----------------- END OF ACHIEVEMENTS ----------------");
+
+      auto icon_block = db.icon();
+      if (icon_block) {
+        display_window_->SetIcon(icon_block.buffer, icon_block.size);
       }
     }
   }

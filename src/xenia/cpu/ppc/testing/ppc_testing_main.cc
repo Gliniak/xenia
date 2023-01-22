@@ -15,12 +15,15 @@
 #include "xenia/base/math.h"
 #include "xenia/base/platform.h"
 #include "xenia/base/string_buffer.h"
-#include "xenia/cpu/backend/x64/x64_backend.h"
 #include "xenia/cpu/cpu_flags.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/ppc/ppc_frontend.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/cpu/raw_module.h"
+
+#if XE_ARCH_AMD64
+#include "xenia/cpu/backend/x64/x64_backend.h"
+#endif  // XE_ARCH
 
 #if XE_COMPILER_MSVC
 #include "xenia/base/platform_win.h"
@@ -196,17 +199,17 @@ class TestRunner {
 
     std::unique_ptr<xe::cpu::backend::Backend> backend;
     if (!backend) {
-#if defined(XENIA_HAS_X64_BACKEND) && XENIA_HAS_X64_BACKEND
+#if XE_ARCH_AMD64
       if (cvars::cpu == "x64") {
         backend.reset(new xe::cpu::backend::x64::X64Backend());
       }
-#endif  // XENIA_HAS_X64_BACKEND
+#endif  // XE_ARCH
       if (cvars::cpu == "any") {
-#if defined(XENIA_HAS_X64_BACKEND) && XENIA_HAS_X64_BACKEND
         if (!backend) {
+#if XE_ARCH_AMD64
           backend.reset(new xe::cpu::backend::x64::X64Backend());
+#endif  // XE_ARCH
         }
-#endif  // XENIA_HAS_X64_BACKEND
       }
     }
 
@@ -346,8 +349,8 @@ class TestRunner {
           uint32_t expected = std::strtoul(ccs, nullptr, 16);
           uint8_t actual = *p;
 
-          expecteds.AppendFormat(" %02X", expected);
-          actuals.AppendFormat(" %02X", actual);
+          expecteds.AppendFormat(" {:02X}", expected);
+          actuals.AppendFormat(" {:02X}", actual);
 
           if (expected != actual) {
             any_failed = true;
@@ -422,7 +425,9 @@ bool RunTests(const std::string_view test_name) {
   int failed_count = 0;
   int passed_count = 0;
 
+#if XE_ARCH_AMD64
   XELOGI("Instruction feature mask {}.", cvars::x64_extension_mask);
+#endif  // XE_ARCH_AMD64
 
   auto test_path_root = cvars::test_path;
   std::vector<std::filesystem::path> test_files;

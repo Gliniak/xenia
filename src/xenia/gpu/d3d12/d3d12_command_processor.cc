@@ -1000,6 +1000,36 @@ bool D3D12CommandProcessor::SetupContext() {
       parameter.Descriptor.RegisterSpace = 0;
       parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
+    // Shared memory SRV and UAV.
+    D3D12_DESCRIPTOR_RANGE root_shared_memory_view_ranges[2];
+    {
+      auto& parameter =
+          root_parameters_bindless[kRootParameter_Bindless_SharedMemory];
+      parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+      parameter.DescriptorTable.NumDescriptorRanges =
+          uint32_t(xe::countof(root_shared_memory_view_ranges));
+      parameter.DescriptorTable.pDescriptorRanges =
+          root_shared_memory_view_ranges;
+      parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+      {
+        auto& range = root_shared_memory_view_ranges[0];
+        range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        range.NumDescriptors = 1;
+        range.BaseShaderRegister =
+            UINT(DxbcShaderTranslator::SRVMainRegister::kSharedMemory);
+        range.RegisterSpace = UINT(DxbcShaderTranslator::SRVSpace::kMain);
+        range.OffsetInDescriptorsFromTableStart = 0;
+      }
+      {
+        auto& range = root_shared_memory_view_ranges[1];
+        range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+        range.NumDescriptors = 1;
+        range.BaseShaderRegister =
+            UINT(DxbcShaderTranslator::UAVRegister::kSharedMemory);
+        range.RegisterSpace = 0;
+        range.OffsetInDescriptorsFromTableStart = 1;
+      }
+    }
     // Sampler heap.
     D3D12_DESCRIPTOR_RANGE root_bindless_sampler_range;
     {
@@ -1019,7 +1049,7 @@ bool D3D12CommandProcessor::SetupContext() {
       root_bindless_sampler_range.OffsetInDescriptorsFromTableStart = 0;
     }
     // View heap.
-    D3D12_DESCRIPTOR_RANGE root_bindless_view_ranges[6];
+    D3D12_DESCRIPTOR_RANGE root_bindless_view_ranges[4];
     {
       auto& parameter =
           root_parameters_bindless[kRootParameter_Bindless_ViewHeap];
@@ -1028,34 +1058,6 @@ bool D3D12CommandProcessor::SetupContext() {
       parameter.DescriptorTable.NumDescriptorRanges = 0;
       parameter.DescriptorTable.pDescriptorRanges = root_bindless_view_ranges;
       parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-      // Shared memory SRV.
-      {
-        assert_true(parameter.DescriptorTable.NumDescriptorRanges <
-                    xe::countof(root_bindless_view_ranges));
-        auto& range = root_bindless_view_ranges[parameter.DescriptorTable
-                                                    .NumDescriptorRanges++];
-        range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        range.NumDescriptors = 1;
-        range.BaseShaderRegister =
-            UINT(DxbcShaderTranslator::SRVMainRegister::kSharedMemory);
-        range.RegisterSpace = UINT(DxbcShaderTranslator::SRVSpace::kMain);
-        range.OffsetInDescriptorsFromTableStart =
-            UINT(SystemBindlessView::kSharedMemoryRawSRV);
-      }
-      // Shared memory UAV.
-      {
-        assert_true(parameter.DescriptorTable.NumDescriptorRanges <
-                    xe::countof(root_bindless_view_ranges));
-        auto& range = root_bindless_view_ranges[parameter.DescriptorTable
-                                                    .NumDescriptorRanges++];
-        range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-        range.NumDescriptors = 1;
-        range.BaseShaderRegister =
-            UINT(DxbcShaderTranslator::UAVRegister::kSharedMemory);
-        range.RegisterSpace = 0;
-        range.OffsetInDescriptorsFromTableStart =
-            UINT(SystemBindlessView::kSharedMemoryRawUAV);
-      }
       // EDRAM.
       if (render_target_cache_->GetPath() ==
           RenderTargetCache::Path::kPixelShaderInterlock) {
@@ -1235,7 +1237,7 @@ bool D3D12CommandProcessor::SetupContext() {
   apply_gamma_root_descriptor_range_source.RangeType =
       D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
   apply_gamma_root_descriptor_range_source.NumDescriptors = 1;
-  apply_gamma_root_descriptor_range_source.BaseShaderRegister = 0;
+  apply_gamma_root_descriptor_range_source.BaseShaderRegister = 1;
   apply_gamma_root_descriptor_range_source.RegisterSpace = 0;
   apply_gamma_root_descriptor_range_source.OffsetInDescriptorsFromTableStart =
       0;
@@ -1254,7 +1256,7 @@ bool D3D12CommandProcessor::SetupContext() {
   apply_gamma_root_descriptor_range_ramp.RangeType =
       D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
   apply_gamma_root_descriptor_range_ramp.NumDescriptors = 1;
-  apply_gamma_root_descriptor_range_ramp.BaseShaderRegister = 1;
+  apply_gamma_root_descriptor_range_ramp.BaseShaderRegister = 0;
   apply_gamma_root_descriptor_range_ramp.RegisterSpace = 0;
   apply_gamma_root_descriptor_range_ramp.OffsetInDescriptorsFromTableStart = 0;
   {
@@ -1418,6 +1420,20 @@ bool D3D12CommandProcessor::SetupContext() {
   if (bindless_resources_used_) {
     // Create the system bindless descriptors once all resources are
     // initialized.
+    // kNullRawSRV.
+    ui::d3d12::util::CreateBufferRawSRV(
+        device,
+        provider.OffsetViewDescriptor(
+            view_bindless_heap_cpu_start_,
+            uint32_t(SystemBindlessView::kNullRawSRV)),
+        nullptr, 0);
+    // kNullRawUAV.
+    ui::d3d12::util::CreateBufferRawUAV(
+        device,
+        provider.OffsetViewDescriptor(
+            view_bindless_heap_cpu_start_,
+            uint32_t(SystemBindlessView::kNullRawUAV)),
+        nullptr, 0);
     // kNullTexture2DArray.
     D3D12_SHADER_RESOURCE_VIEW_DESC null_srv_desc;
     null_srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -1718,10 +1734,6 @@ void D3D12CommandProcessor::OnGammaRampPWLValueWritten() {
 void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                                       uint32_t frontbuffer_width,
                                       uint32_t frontbuffer_height) {
-  // FIXME(Triang3l): frontbuffer_ptr is currently unreliable, in the trace
-  // player it's set to 0, but it's not needed anyway since the fetch constant
-  // contains the address.
-
   SCOPE_profile_cpu_f("gpu");
 
   ui::Presenter* presenter = graphics_system_->presenter();
@@ -1745,12 +1757,9 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   }
   D3D12_RESOURCE_DESC swap_texture_desc = swap_texture_resource->GetDesc();
 
-  uint32_t draw_resolution_scale_max =
-      std::max(texture_cache_->draw_resolution_scale_x(),
-               texture_cache_->draw_resolution_scale_y());
   presenter->RefreshGuestOutput(
       uint32_t(swap_texture_desc.Width), uint32_t(swap_texture_desc.Height),
-      1280 * draw_resolution_scale_max, 720 * draw_resolution_scale_max,
+      1280, 720,
       [this, &swap_texture_srv_desc, frontbuffer_format, swap_texture_resource,
        &swap_texture_desc](
           ui::Presenter::GuestOutputRefreshContext& context) -> bool {
@@ -1964,7 +1973,7 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         }
         SetExternalPipeline(apply_gamma_pipeline);
         SubmitBarriers();
-        uint32_t group_count_x = (uint32_t(swap_texture_desc.Width) + 7) / 8;
+        uint32_t group_count_x = (uint32_t(swap_texture_desc.Width) + 15) / 16;
         uint32_t group_count_y = (uint32_t(swap_texture_desc.Height) + 7) / 8;
         deferred_command_list_.D3DDispatch(group_count_x, group_count_y, 1);
 
@@ -2166,12 +2175,21 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
       draw_util::GetNormalizedDepthControl(regs);
 
   // Shader modifications.
+  uint32_t ps_param_gen_pos = UINT32_MAX;
+  uint32_t interpolator_mask =
+      pixel_shader ? (vertex_shader->writes_interpolators() &
+                      pixel_shader->GetInterpolatorInputMask(
+                          regs.Get<reg::SQ_PROGRAM_CNTL>(),
+                          regs.Get<reg::SQ_CONTEXT_MISC>(), ps_param_gen_pos))
+                   : 0;
   DxbcShaderTranslator::Modification vertex_shader_modification =
       pipeline_cache_->GetCurrentVertexShaderModification(
-          *vertex_shader, primitive_processing_result.host_vertex_shader_type);
+          *vertex_shader, primitive_processing_result.host_vertex_shader_type,
+          interpolator_mask);
   DxbcShaderTranslator::Modification pixel_shader_modification =
       pixel_shader ? pipeline_cache_->GetCurrentPixelShaderModification(
-                         *pixel_shader, normalized_depth_control)
+                         *pixel_shader, interpolator_mask, ps_param_gen_pos,
+                         normalized_depth_control)
                    : DxbcShaderTranslator::Modification(0);
 
   // Set up the render targets - this may perform dispatches and draws.
@@ -2185,7 +2203,9 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
     return false;
   }
 
-  // Translate the shaders and create the pipeline if needed.
+  // Create the pipeline (for this, need the actually used render target formats
+  // from the render target cache), translating the shaders - doing this now to
+  // obtain the used textures.
   D3D12Shader::D3D12Translation* vertex_shader_translation =
       static_cast<D3D12Shader::D3D12Translation*>(
           vertex_shader->GetOrCreateTranslation(
@@ -2239,18 +2259,13 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
   // Get dynamic rasterizer state.
   uint32_t draw_resolution_scale_x = texture_cache_->draw_resolution_scale_x();
   uint32_t draw_resolution_scale_y = texture_cache_->draw_resolution_scale_y();
-  RenderTargetCache::DepthFloat24Conversion depth_float24_conversion =
-      render_target_cache_->depth_float24_conversion();
   draw_util::ViewportInfo viewport_info;
   draw_util::GetHostViewportInfo(
       regs, draw_resolution_scale_x, draw_resolution_scale_y, true,
       D3D12_VIEWPORT_BOUNDS_MAX, D3D12_VIEWPORT_BOUNDS_MAX, false,
       normalized_depth_control,
       host_render_targets_used &&
-          (depth_float24_conversion ==
-               RenderTargetCache::DepthFloat24Conversion::kOnOutputTruncating ||
-           depth_float24_conversion ==
-               RenderTargetCache::DepthFloat24Conversion::kOnOutputRounding),
+          render_target_cache_->depth_float24_convert_in_pixel_shader(),
       host_render_targets_used, pixel_shader && pixel_shader->writes_depth(),
       viewport_info);
   draw_util::Scissor scissor;
@@ -2269,11 +2284,12 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
   UpdateSystemConstantValues(
       memexport_used, primitive_polygonal,
       primitive_processing_result.line_loop_closing_index,
-      primitive_processing_result.host_index_endian, viewport_info,
+      primitive_processing_result.host_shader_index_endian, viewport_info,
       used_texture_mask, normalized_depth_control, normalized_color_mask);
 
   // Update constant buffers, descriptors and root parameters.
-  if (!UpdateBindings(vertex_shader, pixel_shader, root_signature)) {
+  if (!UpdateBindings(vertex_shader, pixel_shader, root_signature,
+                      memexport_used)) {
     return false;
   }
   // Must not call anything that can change the descriptor heap from now on!
@@ -2429,12 +2445,24 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
     switch (primitive_processing_result.host_primitive_type) {
       // TODO(Triang3l): Support all primitive types.
       case xenos::PrimitiveType::kTriangleList:
-      case xenos::PrimitiveType::kTrianglePatch:
         primitive_topology = D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST;
         break;
       case xenos::PrimitiveType::kQuadList:
-      case xenos::PrimitiveType::kQuadPatch:
         primitive_topology = D3D_PRIMITIVE_TOPOLOGY_4_CONTROL_POINT_PATCHLIST;
+        break;
+      case xenos::PrimitiveType::kTrianglePatch:
+        primitive_topology =
+            (regs.Get<reg::VGT_HOS_CNTL>().tess_mode ==
+             xenos::TessellationMode::kAdaptive)
+                ? D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST
+                : D3D_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST;
+        break;
+      case xenos::PrimitiveType::kQuadPatch:
+        primitive_topology =
+            (regs.Get<reg::VGT_HOS_CNTL>().tess_mode ==
+             xenos::TessellationMode::kAdaptive)
+                ? D3D_PRIMITIVE_TOPOLOGY_4_CONTROL_POINT_PATCHLIST
+                : D3D_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST;
         break;
       default:
         XELOGE(
@@ -2502,7 +2530,7 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
     }
     ID3D12Resource* scratch_index_buffer = nullptr;
     switch (primitive_processing_result.index_buffer_type) {
-      case PrimitiveProcessor::ProcessedIndexBufferType::kGuest: {
+      case PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA: {
         if (memexport_used) {
           // If the shared memory is a UAV, it can't be used as an index buffer
           // (UAV is a read/write state, index buffer is a read-only state).
@@ -2534,7 +2562,8 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
             primitive_processor_->GetConvertedIndexBufferGpuAddress(
                 primitive_processing_result.host_index_buffer_handle);
         break;
-      case PrimitiveProcessor::ProcessedIndexBufferType::kHostBuiltin:
+      case PrimitiveProcessor::ProcessedIndexBufferType::kHostBuiltinForAuto:
+      case PrimitiveProcessor::ProcessedIndexBufferType::kHostBuiltinForDMA:
         index_buffer_view.BufferLocation =
             primitive_processor_->GetBuiltinIndexBufferGpuAddress(
                 primitive_processing_result.host_index_buffer_handle);
@@ -2878,6 +2907,7 @@ bool D3D12CommandProcessor::BeginSubmission(bool is_guest_command) {
     cbuffer_binding_float_pixel_.up_to_date = false;
     cbuffer_binding_bool_loop_.up_to_date = false;
     cbuffer_binding_fetch_.up_to_date = false;
+    current_shared_memory_binding_is_uav_.reset();
     if (bindless_resources_used_) {
       cbuffer_binding_descriptor_indices_vertex_.up_to_date = false;
       cbuffer_binding_descriptor_indices_pixel_.up_to_date = false;
@@ -3149,8 +3179,6 @@ void D3D12CommandProcessor::UpdateSystemConstantValues(
   const RegisterFile& regs = *register_file_;
   auto pa_cl_clip_cntl = regs.Get<reg::PA_CL_CLIP_CNTL>();
   auto pa_cl_vte_cntl = regs.Get<reg::PA_CL_VTE_CNTL>();
-  auto pa_su_point_minmax = regs.Get<reg::PA_SU_POINT_MINMAX>();
-  auto pa_su_point_size = regs.Get<reg::PA_SU_POINT_SIZE>();
   auto pa_su_sc_mode_cntl = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
   float rb_alpha_ref = regs[XE_GPU_REG_RB_ALPHA_REF].f32;
   auto rb_colorcontrol = regs.Get<reg::RB_COLORCONTROL>();
@@ -3179,15 +3207,14 @@ void D3D12CommandProcessor::UpdateSystemConstantValues(
   // flow.
   reg::RB_COLOR_INFO color_infos[4];
   float rt_clamp[4][4];
+  // Two UINT32_MAX if no components actually existing in the RT are written.
   uint32_t rt_keep_masks[4][2];
   for (uint32_t i = 0; i < 4; ++i) {
     auto color_info = regs.Get<reg::RB_COLOR_INFO>(
         reg::RB_COLOR_INFO::rt_register_indices[i]);
     color_infos[i] = color_info;
     if (edram_rov_used) {
-      // Get the mask for keeping previous color's components unmodified,
-      // or two UINT32_MAX if no colors actually existing in the RT are written.
-      DxbcShaderTranslator::ROV_GetColorFormatSystemConstants(
+      RenderTargetCache::GetPSIColorFormatInfo(
           color_info.color_format, (normalized_color_mask >> (i * 4)) & 0b1111,
           rt_clamp[i][0], rt_clamp[i][1], rt_clamp[i][2], rt_clamp[i][3],
           rt_keep_masks[i][0], rt_keep_masks[i][1]);
@@ -3237,24 +3264,13 @@ void D3D12CommandProcessor::UpdateSystemConstantValues(
   if (pa_cl_vte_cntl.vtx_w0_fmt) {
     flags |= DxbcShaderTranslator::kSysFlag_WNotReciprocal;
   }
-  // User clip planes (UCP_ENA_#), when not CLIP_DISABLE.
-  if (!pa_cl_clip_cntl.clip_disable) {
-    flags |= (pa_cl_clip_cntl.value & 0b111111)
-             << DxbcShaderTranslator::kSysFlag_UserClipPlane0_Shift;
-  }
   // Whether the primitive is polygonal and SV_IsFrontFace matters.
   if (primitive_polygonal) {
     flags |= DxbcShaderTranslator::kSysFlag_PrimitivePolygonal;
   }
   // Primitive type.
-  if (vgt_draw_initiator.prim_type == xenos::PrimitiveType::kPointList) {
-    flags |= DxbcShaderTranslator::kSysFlag_PrimitivePoint;
-  } else if (draw_util::IsPrimitiveLine(regs)) {
+  if (draw_util::IsPrimitiveLine(regs)) {
     flags |= DxbcShaderTranslator::kSysFlag_PrimitiveLine;
-  }
-  // Primitive killing condition.
-  if (pa_cl_clip_cntl.vtx_kill_or) {
-    flags |= DxbcShaderTranslator::kSysFlag_KillIfAnyVertexKilled;
   }
   // Depth format.
   if (rb_depth_info.depth_format == xenos::DepthRenderTargetFormat::kD24FS8) {
@@ -3335,18 +3351,24 @@ void D3D12CommandProcessor::UpdateSystemConstantValues(
   system_constants_.vertex_index_max = vgt_max_vtx_indx;
 
   // User clip planes (UCP_ENA_#), when not CLIP_DISABLE.
+  // The shader knows only the total count - tightly packing the user clip
+  // planes that are actually used.
   if (!pa_cl_clip_cntl.clip_disable) {
-    for (uint32_t i = 0; i < 6; ++i) {
-      if (!(pa_cl_clip_cntl.value & (1 << i))) {
-        continue;
-      }
-      const float* ucp = &regs[XE_GPU_REG_PA_CL_UCP_0_X + i * 4].f32;
-      if (std::memcmp(system_constants_.user_clip_planes[i], ucp,
+    float* user_clip_plane_write_ptr = system_constants_.user_clip_planes[0];
+    uint32_t user_clip_planes_remaining = pa_cl_clip_cntl.ucp_ena;
+    uint32_t user_clip_plane_index;
+    while (xe::bit_scan_forward(user_clip_planes_remaining,
+                                &user_clip_plane_index)) {
+      user_clip_planes_remaining &= ~(UINT32_C(1) << user_clip_plane_index);
+      const float* user_clip_plane =
+          &regs[XE_GPU_REG_PA_CL_UCP_0_X + user_clip_plane_index * 4].f32;
+      if (std::memcmp(user_clip_plane_write_ptr, user_clip_plane,
                       4 * sizeof(float))) {
         dirty = true;
-        std::memcpy(system_constants_.user_clip_planes[i], ucp,
+        std::memcpy(user_clip_plane_write_ptr, user_clip_plane,
                     4 * sizeof(float));
       }
+      user_clip_plane_write_ptr += 4;
     }
   }
 
@@ -3359,59 +3381,47 @@ void D3D12CommandProcessor::UpdateSystemConstantValues(
   }
 
   // Point size.
-  float point_vertex_diameter_min =
-      float(pa_su_point_minmax.min_size) * (2.0f / 16.0f);
-  float point_vertex_diameter_max =
-      float(pa_su_point_minmax.max_size) * (2.0f / 16.0f);
-  float point_constant_diameter_x =
-      float(pa_su_point_size.width) * (2.0f / 16.0f);
-  float point_constant_diameter_y =
-      float(pa_su_point_size.height) * (2.0f / 16.0f);
-  dirty |=
-      system_constants_.point_vertex_diameter_min != point_vertex_diameter_min;
-  dirty |=
-      system_constants_.point_vertex_diameter_max != point_vertex_diameter_max;
-  dirty |=
-      system_constants_.point_constant_diameter[0] != point_constant_diameter_x;
-  dirty |=
-      system_constants_.point_constant_diameter[1] != point_constant_diameter_y;
-  system_constants_.point_vertex_diameter_min = point_vertex_diameter_min;
-  system_constants_.point_vertex_diameter_max = point_vertex_diameter_max;
-  system_constants_.point_constant_diameter[0] = point_constant_diameter_x;
-  system_constants_.point_constant_diameter[1] = point_constant_diameter_y;
-  // 2 because 1 in the NDC is half of the viewport's axis, 0.5 for diameter to
-  // radius conversion to avoid multiplying the per-vertex diameter by an
-  // additional constant in the shader.
-  float point_screen_diameter_to_ndc_radius_x =
-      (/* 0.5f * 2.0f * */ float(draw_resolution_scale_x)) /
-      std::max(viewport_info.xy_extent[0], uint32_t(1));
-  float point_screen_diameter_to_ndc_radius_y =
-      (/* 0.5f * 2.0f * */ float(draw_resolution_scale_y)) /
-      std::max(viewport_info.xy_extent[1], uint32_t(1));
-  dirty |= system_constants_.point_screen_diameter_to_ndc_radius[0] !=
-           point_screen_diameter_to_ndc_radius_x;
-  dirty |= system_constants_.point_screen_diameter_to_ndc_radius[1] !=
-           point_screen_diameter_to_ndc_radius_y;
-  system_constants_.point_screen_diameter_to_ndc_radius[0] =
-      point_screen_diameter_to_ndc_radius_x;
-  system_constants_.point_screen_diameter_to_ndc_radius[1] =
-      point_screen_diameter_to_ndc_radius_y;
-
-  // Interpolator sampling pattern, centroid or center.
-  uint32_t interpolator_sampling_pattern =
-      xenos::GetInterpolatorSamplingPattern(
-          rb_surface_info.msaa_samples, sq_context_misc.sc_sample_cntl,
-          regs.Get<reg::SQ_INTERPOLATOR_CNTL>().sampling_pattern);
-  dirty |= system_constants_.interpolator_sampling_pattern !=
-           interpolator_sampling_pattern;
-  system_constants_.interpolator_sampling_pattern =
-      interpolator_sampling_pattern;
-
-  // Pixel parameter register.
-  uint32_t ps_param_gen =
-      sq_program_cntl.param_gen ? sq_context_misc.param_gen_pos : UINT_MAX;
-  dirty |= system_constants_.ps_param_gen != ps_param_gen;
-  system_constants_.ps_param_gen = ps_param_gen;
+  if (vgt_draw_initiator.prim_type == xenos::PrimitiveType::kPointList) {
+    auto pa_su_point_minmax = regs.Get<reg::PA_SU_POINT_MINMAX>();
+    auto pa_su_point_size = regs.Get<reg::PA_SU_POINT_SIZE>();
+    float point_vertex_diameter_min =
+        float(pa_su_point_minmax.min_size) * (2.0f / 16.0f);
+    float point_vertex_diameter_max =
+        float(pa_su_point_minmax.max_size) * (2.0f / 16.0f);
+    float point_constant_diameter_x =
+        float(pa_su_point_size.width) * (2.0f / 16.0f);
+    float point_constant_diameter_y =
+        float(pa_su_point_size.height) * (2.0f / 16.0f);
+    dirty |= system_constants_.point_vertex_diameter_min !=
+             point_vertex_diameter_min;
+    dirty |= system_constants_.point_vertex_diameter_max !=
+             point_vertex_diameter_max;
+    dirty |= system_constants_.point_constant_diameter[0] !=
+             point_constant_diameter_x;
+    dirty |= system_constants_.point_constant_diameter[1] !=
+             point_constant_diameter_y;
+    system_constants_.point_vertex_diameter_min = point_vertex_diameter_min;
+    system_constants_.point_vertex_diameter_max = point_vertex_diameter_max;
+    system_constants_.point_constant_diameter[0] = point_constant_diameter_x;
+    system_constants_.point_constant_diameter[1] = point_constant_diameter_y;
+    // 2 because 1 in the NDC is half of the viewport's axis, 0.5 for diameter
+    // to radius conversion to avoid multiplying the per-vertex diameter by an
+    // additional constant in the shader.
+    float point_screen_diameter_to_ndc_radius_x =
+        (/* 0.5f * 2.0f * */ float(draw_resolution_scale_x)) /
+        std::max(viewport_info.xy_extent[0], uint32_t(1));
+    float point_screen_diameter_to_ndc_radius_y =
+        (/* 0.5f * 2.0f * */ float(draw_resolution_scale_y)) /
+        std::max(viewport_info.xy_extent[1], uint32_t(1));
+    dirty |= system_constants_.point_screen_diameter_to_ndc_radius[0] !=
+             point_screen_diameter_to_ndc_radius_x;
+    dirty |= system_constants_.point_screen_diameter_to_ndc_radius[1] !=
+             point_screen_diameter_to_ndc_radius_y;
+    system_constants_.point_screen_diameter_to_ndc_radius[0] =
+        point_screen_diameter_to_ndc_radius_x;
+    system_constants_.point_screen_diameter_to_ndc_radius[1] =
+        point_screen_diameter_to_ndc_radius_y;
+  }
 
   // Texture signedness / gamma.
   bool gamma_render_target_as_srgb =
@@ -3477,7 +3487,7 @@ void D3D12CommandProcessor::UpdateSystemConstantValues(
         edram_32bpp_tile_pitch_dwords_scaled;
   }
 
-  // Color exponent bias and output index mapping or ROV render target writing.
+  // Color exponent bias and ROV render target writing.
   for (uint32_t i = 0; i < 4; ++i) {
     reg::RB_COLOR_INFO color_info = color_infos[i];
     // Exponent bias is in bits 20:25 of RB_COLOR_INFO.
@@ -3513,8 +3523,8 @@ void D3D12CommandProcessor::UpdateSystemConstantValues(
                  rt_base_dwords_scaled;
         system_constants_.edram_rt_base_dwords_scaled[i] =
             rt_base_dwords_scaled;
-        uint32_t format_flags = DxbcShaderTranslator::ROV_AddColorFormatFlags(
-            color_info.color_format);
+        uint32_t format_flags =
+            RenderTargetCache::AddPSIColorFormatFlags(color_info.color_format);
         dirty |= system_constants_.edram_rt_format_flags[i] != format_flags;
         system_constants_.edram_rt_format_flags[i] = format_flags;
         // Can't do float comparisons here because NaNs would result in always
@@ -3657,9 +3667,10 @@ void D3D12CommandProcessor::UpdateSystemConstantValues(
   cbuffer_binding_system_.up_to_date &= !dirty;
 }
 
-bool D3D12CommandProcessor::UpdateBindings(
-    const D3D12Shader* vertex_shader, const D3D12Shader* pixel_shader,
-    ID3D12RootSignature* root_signature) {
+bool D3D12CommandProcessor::UpdateBindings(const D3D12Shader* vertex_shader,
+                                           const D3D12Shader* pixel_shader,
+                                           ID3D12RootSignature* root_signature,
+                                           bool shared_memory_is_uav) {
   const ui::d3d12::D3D12Provider& provider = GetD3D12Provider();
   ID3D12Device* device = provider.GetDevice();
   const RegisterFile& regs = *register_file_;
@@ -3696,6 +3707,9 @@ bool D3D12CommandProcessor::UpdateBindings(
   uint32_t root_parameter_bool_loop_constants =
       bindless_resources_used_ ? kRootParameter_Bindless_BoolLoopConstants
                                : kRootParameter_Bindful_BoolLoopConstants;
+  uint32_t root_parameter_shared_memory_and_bindful_edram =
+      bindless_resources_used_ ? kRootParameter_Bindless_SharedMemory
+                               : kRootParameter_Bindful_SharedMemoryAndEdram;
 
   //
   // Update root constant buffers that are common for bindful and bindless.
@@ -3859,6 +3873,13 @@ bool D3D12CommandProcessor::UpdateBindings(
   //
   // Update descriptors.
   //
+
+  if (!current_shared_memory_binding_is_uav_.has_value() ||
+      current_shared_memory_binding_is_uav_.value() != shared_memory_is_uav) {
+    current_shared_memory_binding_is_uav_ = shared_memory_is_uav;
+    current_graphics_root_up_to_date_ &=
+        ~(1u << root_parameter_shared_memory_and_bindful_edram);
+  }
 
   // Get textures and samplers used by the vertex shader, check if the last used
   // samplers are compatible and update them.
@@ -4188,12 +4209,14 @@ bool D3D12CommandProcessor::UpdateBindings(
     if (write_textures_pixel) {
       view_count_partial_update += texture_count_pixel;
     }
-    // All the constants + shared memory SRV and UAV + textures.
+    // Shared memory SRV and null UAV + null SRV and shared memory UAV +
+    // textures.
     size_t view_count_full_update =
-        2 + texture_count_vertex + texture_count_pixel;
+        4 + texture_count_vertex + texture_count_pixel;
     if (edram_rov_used) {
-      // + EDRAM UAV.
-      ++view_count_full_update;
+      // + EDRAM UAV in two tables (with the shared memory SRV and with the
+      // shared memory UAV).
+      view_count_full_update += 2;
     }
     D3D12_CPU_DESCRIPTOR_HANDLE view_cpu_handle;
     D3D12_GPU_DESCRIPTOR_HANDLE view_gpu_handle;
@@ -4238,8 +4261,23 @@ bool D3D12CommandProcessor::UpdateBindings(
       bindful_textures_written_pixel_ = false;
       // If updating fully, write the shared memory SRV and UAV descriptors and,
       // if needed, the EDRAM descriptor.
-      gpu_handle_shared_memory_and_edram_ = view_gpu_handle;
+      // SRV + null UAV + EDRAM.
+      gpu_handle_shared_memory_srv_and_edram_ = view_gpu_handle;
       shared_memory_->WriteRawSRVDescriptor(view_cpu_handle);
+      view_cpu_handle.ptr += descriptor_size_view;
+      view_gpu_handle.ptr += descriptor_size_view;
+      ui::d3d12::util::CreateBufferRawUAV(device, view_cpu_handle, nullptr, 0);
+      view_cpu_handle.ptr += descriptor_size_view;
+      view_gpu_handle.ptr += descriptor_size_view;
+      if (edram_rov_used) {
+        render_target_cache_->WriteEdramUintPow2UAVDescriptor(view_cpu_handle,
+                                                              2);
+        view_cpu_handle.ptr += descriptor_size_view;
+        view_gpu_handle.ptr += descriptor_size_view;
+      }
+      // Null SRV + UAV + EDRAM.
+      gpu_handle_shared_memory_uav_and_edram_ = view_gpu_handle;
+      ui::d3d12::util::CreateBufferRawSRV(device, view_cpu_handle, nullptr, 0);
       view_cpu_handle.ptr += descriptor_size_view;
       view_gpu_handle.ptr += descriptor_size_view;
       shared_memory_->WriteRawUAVDescriptor(view_cpu_handle);
@@ -4380,6 +4418,31 @@ bool D3D12CommandProcessor::UpdateBindings(
     current_graphics_root_up_to_date_ |= 1u
                                          << root_parameter_bool_loop_constants;
   }
+  if (!(current_graphics_root_up_to_date_ &
+        (1u << root_parameter_shared_memory_and_bindful_edram))) {
+    assert_true(current_shared_memory_binding_is_uav_.has_value());
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle_shared_memory_and_bindful_edram;
+    if (bindless_resources_used_) {
+      gpu_handle_shared_memory_and_bindful_edram =
+          provider.OffsetViewDescriptor(
+              view_bindless_heap_gpu_start_,
+              uint32_t(current_shared_memory_binding_is_uav_.value()
+                           ? SystemBindlessView ::
+                                 kNullRawSRVAndSharedMemoryRawUAVStart
+                           : SystemBindlessView ::
+                                 kSharedMemoryRawSRVAndNullRawUAVStart));
+    } else {
+      gpu_handle_shared_memory_and_bindful_edram =
+          current_shared_memory_binding_is_uav_.value()
+              ? gpu_handle_shared_memory_uav_and_edram_
+              : gpu_handle_shared_memory_srv_and_edram_;
+    }
+    deferred_command_list_.D3DSetGraphicsRootDescriptorTable(
+        root_parameter_shared_memory_and_bindful_edram,
+        gpu_handle_shared_memory_and_bindful_edram);
+    current_graphics_root_up_to_date_ |=
+        1u << root_parameter_shared_memory_and_bindful_edram;
+  }
   if (bindless_resources_used_) {
     if (!(current_graphics_root_up_to_date_ &
           (1u << kRootParameter_Bindless_DescriptorIndicesPixel))) {
@@ -4413,14 +4476,6 @@ bool D3D12CommandProcessor::UpdateBindings(
                                            << kRootParameter_Bindless_ViewHeap;
     }
   } else {
-    if (!(current_graphics_root_up_to_date_ &
-          (1u << kRootParameter_Bindful_SharedMemoryAndEdram))) {
-      deferred_command_list_.D3DSetGraphicsRootDescriptorTable(
-          kRootParameter_Bindful_SharedMemoryAndEdram,
-          gpu_handle_shared_memory_and_edram_);
-      current_graphics_root_up_to_date_ |=
-          1u << kRootParameter_Bindful_SharedMemoryAndEdram;
-    }
     uint32_t extra_index;
     extra_index = current_graphics_root_bindful_extras_.textures_pixel;
     if (extra_index != RootBindfulExtraParameterIndices::kUnavailable &&

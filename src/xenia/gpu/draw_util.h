@@ -10,6 +10,7 @@
 #ifndef XENIA_GPU_DRAW_UTIL_H_
 #define XENIA_GPU_DRAW_UTIL_H_
 
+#include <cmath>
 #include <cstdint>
 #include <utility>
 
@@ -113,29 +114,113 @@ extern const int8_t kD3D10StandardSamplePositions4x[4][2];
 
 reg::RB_DEPTHCONTROL GetNormalizedDepthControl(const RegisterFile& regs);
 
-constexpr float GetD3D10PolygonOffsetFactor(
-    xenos::DepthRenderTargetFormat depth_format, bool float24_as_0_to_0_5) {
-  if (depth_format == xenos::DepthRenderTargetFormat::kD24S8) {
-    return float(1 << 24);
+// Direct3D 9 and Xenos constant polygon offset is an absolute floating-point
+// value.
+// It's possibly treated just as an absolute offset by the Xenos too - the
+// PA_SU_POLY_OFFSET_DB_FMT_CNTL::POLY_OFFSET_DB_IS_FLOAT_FMT switch was added
+// later in the R6xx, though this needs verification.
+// 5454082B, for example, for float24, sets the bias to 0.000002 - or slightly
+// above 2^-19.
+// The total polygon offset formula specified by Direct3D 9 is:
+// `offset = slope * slope factor + constant offset`
+//
+// Direct3D 10, Metal, OpenGL and Vulkan, however, take the constant polygon
+// offset factor as a relative value, with the formula being:
+// `offset = slope * slope factor +
+//           maximum resolvable difference * constant factor`
+// where the maximum resolvable difference is:
+// - For a fixed-point depth buffer, the minimum representable non-zero value in
+//   the depth buffer, that is 1 / (2^24 - 1) for unorm24 (on Vulkan though it's
+//   allowed to be up to 2 / 2^24 in this case).
+// - For a floating-point depth buffer, it's:
+//   2 ^ (exponent of the maximum Z in the primitive - the number of explicitly
+//        stored mantissa bits)
+//   (23 explicitly stored bits for float32 - and 20 explicitly stored bits for
+//    float24).
+//
+// While the polygon offset is a fixed-function feature in the pipeline, and the
+// formula can't be toggled between absolute and relative, it's important that
+// Xenia translates the guest absolute depth bias into the host relative depth
+// bias in a way that the values that separate coplanar geometry on the guest
+// qualitatively also still correctly separate them on the host.
+//
+// It also should be taken into account that on Xenia, float32 depth values may
+// be snapped to float24 directly in the translated pixel shaders (to prevent
+// data loss if after reuploading a depth buffer to the EDRAM there's no way to
+// recover the full-precision value, that results in the inability to perform
+// more rendering passes for the same geometry), and not only to the nearest
+// value, but also just truncating them (so in case of data loss, the "greater
+// or equal" depth test function still works).
+//
+// Because of this, the depth bias may be lost if Xenia translates it into a too
+// small value, and the conversion of the depth is done in the pixel shader.
+// Specifically, Xenia should not simply convert a value that separates coplanar
+// primitives as float24 just into something that still separates them as
+// float32. Essentially, if conversion to float24 is done in the pixel shader,
+// Xenia should make sure the polygon offset on the host is calculated as if the
+// host had float24 depth too, not float32.
+
+// Applies to both native host unorm24, and unorm24 emulated as host float32.
+// For native unorm24, this is exactly the inverse of the minimum representable
+// non-zero value.
+// For unorm24 emulated as float32, the minimum representable non-zero value for
+// a primitive in the [0.5, 1) range (the worst case that forward depth reaches
+// very quickly, at nearly `2 * near clipping plane distance`) is 2 ^ (-1 - 23),
+// or 2^-24, and this factor is almost 2^24.
+constexpr float kD3D10PolygonOffsetFactorUnorm24 =
+    float((UINT32_C(1) << 24) - 1);
+
+// For a host floating-point depth buffer, the integer value of the depth bias
+// is roughly how many ULPs primitives should be separated by.
+//
+// Float24, however, has 3 mantissa bits fewer than float32 - so one float24 ULP
+// corresponds to 8 float32 ULPs - which means each conceptual "layer" of the
+// guest value should correspond to a polygon offset of 8. So, after the guest
+// absolute value is converted to "layers", it should be multiplied by 8 before
+// being used on the host with a float32 depth buffer.
+//
+// The scale for converting the guest absolute depth bias to the "layers" needs
+// to be determined for the worst case - specifically, the [0.5, 1) range (1 is
+// a single value, so there's no need to take it into consideration). In this
+// range, Z values have the exponent of -1. Therefore, for float24, the absolute
+// offset is obtained from the "layer index" in this range as (disregarding the
+// slope term):
+// offset = 2 ^ (-1 - 20) * constant factor
+// Thus, to obtain the constant factor from the absolute offset in the range
+// with the lowest absolute precision, the offset needs to be multiplied by
+// 2^21.
+//
+// Finally, the 0...0.5 range may be used on the host to represent the 0...1
+// guest depth range to be able to copy all possible encodings, which are
+// [0, 2), via a [0, 1] depth output variable, during EDRAM contents
+// reinterpretation. This is done by scaling the viewport depth bounds by 0.5.
+// However, there's no need to do anything to handle this scenario in the
+// polygon offset - it's calculated after applying the viewport transformation,
+// and the maximum Z value in the primitive will have an exponent lowered by 1,
+// thus the result will also have an exponent lowered by 1 - exactly what's
+// needed for remapping 0...1 to 0...0.5.
+constexpr float kD3D10PolygonOffsetFactorFloat24 =
+    float(UINT32_C(1) << (21 + 3));
+
+inline int32_t GetD3D10IntegerPolygonOffset(
+    xenos::DepthRenderTargetFormat depth_format, float polygon_offset) {
+  bool is_float24 = depth_format == xenos::DepthRenderTargetFormat::kD24FS8;
+  // Using `ceil` because more offset is better, especially if flooring would
+  // result in 0 - conceptually, if the offset is used at all, primitives need
+  // to be separated in the depth buffer.
+  int32_t polygon_offset_int = int32_t(
+      std::ceil(std::abs(polygon_offset) *
+                (is_float24 ? kD3D10PolygonOffsetFactorFloat24 * (1.0f / 8.0f)
+                            : kD3D10PolygonOffsetFactorUnorm24)));
+  // For float24, the conversion may be done in the translated pixel shaders,
+  // including via truncation rather than rounding to the nearest. So, making
+  // the integer bias always in the increments of 2^3 (2 ^ the difference in the
+  // mantissa bit count between float32 and float24), and because of that, doing
+  // `ceil` before changing the units from float24 ULPs to float32 ULPs.
+  if (is_float24) {
+    polygon_offset_int <<= 3;
   }
-  // 20 explicit + 1 implicit (1.) mantissa bits.
-  // 2^20 is not enough for 415607E6 retail version's training mission shooting
-  // range floor (with the number 1) on Direct3D 12. Tested on Nvidia GeForce
-  // GTX 1070, the exact formula (taking into account the 0...1 to 0...0.5
-  // remapping described below) used for testing is
-  // `int(ceil(offset * 2^20 * 0.5)) * sign(offset)`. With 2^20 * 0.5, there
-  // are various kinds of stripes dependending on the view angle in that
-  // location. With 2^21 * 0.5, the issue is not present.
-  constexpr float kFloat24Scale = float(1 << 21);
-  // 0...0.5 range may be used on the host to represent the 0...1 guest depth
-  // range to be able to copy all possible encodings, which are [0, 2), via a
-  // [0, 1] depth output variable, during EDRAM contents reinterpretation.
-  // This is done by scaling the viewport depth bounds by 0.5. However, the
-  // depth bias is applied after the viewport. This adjustment is only needed
-  // for the constant bias - for slope-scaled, the derivatives of Z are
-  // calculated after the viewport as well, and will already include the 0.5
-  // scaling from the viewport.
-  return float24_as_0_to_0_5 ? kFloat24Scale * 0.5f : kFloat24Scale;
+  return polygon_offset < 0 ? -polygon_offset_int : polygon_offset_int;
 }
 
 // For hosts not supporting separate front and back polygon offsets, returns the
@@ -226,20 +311,6 @@ void GetScissor(const RegisterFile& regs, Scissor& scissor_out,
 uint32_t GetNormalizedColorMask(const RegisterFile& regs,
                                 uint32_t pixel_shader_writes_color_targets);
 
-// Scales, and shift amounts of the upper 32 bits of the 32x32=64-bit
-// multiplication result, for fast division and multiplication by
-// EDRAM-tile-related amounts.
-constexpr uint32_t kDivideScale3 = 0xAAAAAAABu;
-constexpr uint32_t kDivideUpperShift3 = 1;
-constexpr uint32_t kDivideScale5 = 0xCCCCCCCDu;
-constexpr uint32_t kDivideUpperShift5 = 2;
-constexpr uint32_t kDivideScale15 = 0x88888889u;
-constexpr uint32_t kDivideUpperShift15 = 3;
-
-void GetEdramTileWidthDivideScaleAndUpperShift(
-    uint32_t draw_resolution_scale_x, uint32_t& divide_scale_out,
-    uint32_t& divide_upper_shift_out);
-
 // Never an identity conversion - can always write conditional move instructions
 // to shaders that will be no-ops for conversion from guest to host samples.
 // While we don't know the exact guest sample pattern, due to the way
@@ -275,13 +346,14 @@ union ResolveEdramInfo {
     uint32_t pitch_tiles : xenos::kEdramPitchTilesBits;
     xenos::MsaaSamples msaa_samples : xenos::kMsaaSamplesBits;
     uint32_t is_depth : 1;
-    // With offset to the 160x32 region that local_x/y_div_8 are relative to.
+    // With offset to the region that edram_offset_x/y_div_8 are relative to.
     uint32_t base_tiles : xenos::kEdramBaseTilesBits;
     uint32_t format : xenos::kRenderTargetFormatBits;
     uint32_t format_is_64bpp : 1;
-    // Whether to take the value of column/row 1 for column/row 0, to reduce
-    // the impact of the half-pixel offset with resolution scaling.
-    uint32_t duplicate_second_pixel : 1;
+    // Whether to fill the half-pixel offset gap on the left and the top sides
+    // of the resolve region with the contents of the first surely covered
+    // column / row with resolution scaling.
+    uint32_t fill_half_pixel_offset : 1;
   };
   ResolveEdramInfo() : packed(0) { static_assert_size(*this, sizeof(packed)); }
 };
@@ -300,12 +372,10 @@ union ResolveCoordinateInfo {
     // totally broken way - in this case, the resolve must be dropped.
     uint32_t width_div_8 : xenos::kResolveSizeBits -
                            xenos::kResolveAlignmentPixelsLog2;
-    uint32_t height_div_8 : xenos::kResolveSizeBits -
-                            xenos::kResolveAlignmentPixelsLog2;
 
-    // 1 to 3.
-    uint32_t draw_resolution_scale_x : 2;
-    uint32_t draw_resolution_scale_y : 2;
+    // 1 to 7.
+    uint32_t draw_resolution_scale_x : 3;
+    uint32_t draw_resolution_scale_y : 3;
   };
   ResolveCoordinateInfo() : packed(0) {
     static_assert_size(*this, sizeof(packed));
@@ -316,8 +386,8 @@ union ResolveCoordinateInfo {
 // the area in tiles, but the pitch between rows is edram_info.pitch_tiles.
 void GetResolveEdramTileSpan(ResolveEdramInfo edram_info,
                              ResolveCoordinateInfo coordinate_info,
-                             uint32_t& base_out, uint32_t& row_length_used_out,
-                             uint32_t& rows_out);
+                             uint32_t height_div_8, uint32_t& base_out,
+                             uint32_t& row_length_used_out, uint32_t& rows_out);
 
 union ResolveCopyDestCoordinateInfo {
   uint32_t packed;
@@ -425,6 +495,11 @@ struct ResolveInfo {
   uint32_t color_original_base;
 
   ResolveCoordinateInfo coordinate_info;
+  // Like coordinate_info.width_div_8, but not needed for shaders.
+  // In pixels.
+  // May be zero if the original rectangle was somehow specified in a totally
+  // broken way - in this case, the resolve must be dropped.
+  uint32_t height_div_8;
 
   reg::RB_COPY_DEST_INFO copy_dest_info;
   ResolveCopyDestCoordinateInfo copy_dest_coordinate_info;
@@ -454,7 +529,7 @@ struct ResolveInfo {
                             uint32_t& rows_out, uint32_t& pitch_out) const {
     ResolveEdramInfo edram_info =
         IsCopyingDepth() ? depth_edram_info : color_edram_info;
-    GetResolveEdramTileSpan(edram_info, coordinate_info, base_out,
+    GetResolveEdramTileSpan(edram_info, coordinate_info, height_div_8, base_out,
                             row_length_used_out, rows_out);
     pitch_out = edram_info.pitch_tiles;
   }
@@ -499,7 +574,7 @@ struct ResolveInfo {
       uint32_t draw_resolution_scale_y) const {
     // 8 guest MSAA samples per invocation.
     uint32_t width_samples_div_8 = coordinate_info.width_div_8;
-    uint32_t height_samples_div_8 = coordinate_info.height_div_8;
+    uint32_t height_samples_div_8 = height_div_8;
     xenos::MsaaSamples samples = IsCopyingDepth()
                                      ? depth_edram_info.msaa_samples
                                      : color_edram_info.msaa_samples;
@@ -517,23 +592,16 @@ struct ResolveInfo {
 };
 
 // Returns false if there was an error obtaining the info making it totally
-// invalid. fixed_16_truncated_to_minus_1_to_1 is false if 16_16 and 16_16_16_16
+// invalid. fixed_rg[ba]16_truncated_to_minus_1_to_1 is false if 16_16[_16_16]
 // color render target formats are properly emulated as -32...32, true if
 // emulated as snorm, with range limited to -1...1, but with correct blending
 // within that range.
 bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
                     TraceWriter& trace_writer, uint32_t draw_resolution_scale_x,
                     uint32_t draw_resolution_scale_y,
-                    bool fixed_16_truncated_to_minus_1_to_1,
+                    bool fixed_rg16_truncated_to_minus_1_to_1,
+                    bool fixed_rgba16_truncated_to_minus_1_to_1,
                     ResolveInfo& info_out);
-
-// Taking user configuration - stretching or letterboxing, overscan region to
-// crop to fill while maintaining the aspect ratio - into account, returns the
-// area where the frame should be presented in the host window.
-void GetPresentArea(uint32_t source_width, uint32_t source_height,
-                    uint32_t window_width, uint32_t window_height,
-                    int32_t& target_x_out, int32_t& target_y_out,
-                    uint32_t& target_width_out, uint32_t& target_height_out);
 
 }  // namespace draw_util
 }  // namespace gpu

@@ -58,7 +58,9 @@ class D3D12TextureCache final : public TextureCache {
       uint32_t mip_linear : 1;              // 14
       xenos::AnisoFilter aniso_filter : 3;  // 17
       uint32_t mip_min_level : 4;           // 21
-      // Maximum mip level is in the texture resource itself.
+      uint32_t mip_base_map : 1;            // 22
+      // Maximum mip level is in the texture resource itself, but mip_base_map
+      // can be used to limit fetching to mip_min_level.
     };
 
     SamplerParameters() : value(0) { static_assert_size(*this, sizeof(value)); }
@@ -128,14 +130,16 @@ class D3D12TextureCache final : public TextureCache {
       uint32_t& scale_x, uint32_t& scale_y,
       const ui::d3d12::D3D12Provider& provider);
   // Ensures the tiles backing the range in the buffers are allocated.
-  bool EnsureScaledResolveMemoryCommitted(uint32_t start_unscaled,
-                                          uint32_t length_unscaled) override;
+  bool EnsureScaledResolveMemoryCommitted(
+      uint32_t start_unscaled, uint32_t length_unscaled,
+      uint32_t length_scaled_alignment_log2 = 0) override;
   // Makes the specified range of up to 1-2 GB currently accessible on the GPU.
   // One draw call can access only at most one range - the same memory is
   // accessible through different buffers based on the range needed, so aliasing
   // barriers are required.
   bool MakeScaledResolveRangeCurrent(uint32_t start_unscaled,
-                                     uint32_t length_unscaled);
+                                     uint32_t length_unscaled,
+                                     uint32_t length_scaled_alignment_log2 = 0);
   // These functions create a view of the range specified in the last successful
   // MakeScaledResolveRangeCurrent call because that function must be called
   // before this.
@@ -150,9 +154,9 @@ class D3D12TextureCache final : public TextureCache {
   }
 
   // Returns the ID3D12Resource of the front buffer texture (in
-  // PIXEL_SHADER_RESOURCE state), or nullptr in case of failure, and writes the
-  // description of its SRV. May call LoadTextureData, so the same restrictions
-  // (such as about descriptor heap change possibility) apply.
+  // NON_PIXEL_SHADER_RESOURCE state), or nullptr in case of failure, and writes
+  // the description of its SRV. May call LoadTextureData, so the same
+  // restrictions (such as about descriptor heap change possibility) apply.
   ID3D12Resource* RequestSwapTexture(
       D3D12_SHADER_RESOURCE_VIEW_DESC& srv_desc_out,
       xenos::TextureFormat& format_out);
@@ -460,6 +464,8 @@ class D3D12TextureCache final : public TextureCache {
     assert_not_null(scaled_resolve_buffer);
     return *scaled_resolve_buffer;
   }
+
+  xenos::ClampMode NormalizeClampMode(xenos::ClampMode clamp_mode) const;
 
   static const HostFormat host_formats_[64];
 

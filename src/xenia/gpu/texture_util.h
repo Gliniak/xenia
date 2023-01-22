@@ -30,9 +30,7 @@ void GetSubresourcesFromFetchConstant(
     const xenos::xe_gpu_texture_fetch_t& fetch, uint32_t* width_minus_1_out,
     uint32_t* height_minus_1_out, uint32_t* depth_or_array_size_minus_1_out,
     uint32_t* base_page_out, uint32_t* mip_page_out,
-    uint32_t* mip_min_level_out, uint32_t* mip_max_level_out,
-    xenos::TextureFilter sampler_mip_filter =
-        xenos::TextureFilter::kUseFetchConst);
+    uint32_t* mip_min_level_out, uint32_t* mip_max_level_out);
 
 // Gets the number of the mipmap level where the packed mips are stored.
 inline uint32_t GetPackedMipLevel(uint32_t width, uint32_t height) {
@@ -146,24 +144,27 @@ struct TextureGuestLayout {
     // multiplied by the array slice count.
     uint32_t array_slice_stride_bytes;
 
-    // Estimated amount of memory this level occupies, and variables involved in
-    // its calculation. Not aligned to kTextureSubresourceAlignmentBytes. For
-    // tiled textures, this will be rounded to 32x32x4 blocks (or 32x32x1
-    // depending on the dimension), but for the linear subresources, this may be
-    // significantly (including less 4 KB pages) smaller than the aligned size
-    // (like for 4E4D083E where aligning the height of a 1280x720 linear texture
-    // results in access violations). For the linear mip tail, this includes all
-    // the mip levels stored in it. If the width is bigger than the pitch, this
-    // will also be taken into account for the last row so all memory actually
-    // used by the texture will be loaded, and may be bigger than the distance
-    // between array slices or levels. The purpose of this parameter is to make
-    // the memory amount that needs to be resident as close to the real amount
-    // as possible, to make sure all the needed data will be read, but also, if
-    // possible, unneeded memory pages won't be accessed (since that may trigger
-    // an access violation on the CPU).
+    // The exclusive upper bound of blocks needed at this level (this level for
+    // non-packed levels, or all the packed levels for the packed mip tail).
     uint32_t x_extent_blocks;
     uint32_t y_extent_blocks;
     uint32_t z_extent;
+    // Estimated amount of memory this level occupies. Not aligned to
+    // kTextureSubresourceAlignmentBytes. For tiled textures, this will be
+    // calculated for the extent rounded to 32x32x4 blocks (or 32x32x1 depending
+    // on the dimensionality), but for linear textures, as well as for mips of
+    // non-power-of-two tiled textures, this may be significantly (including
+    // less 4 KB pages) smaller than the aligned size (like for 4E4D083E where
+    // aligning the height of a 1280x720 linear texture results in access
+    // violations). For the linear mip tail, this includes all the mip levels
+    // stored in it. If the width is bigger than the pitch, this will also be
+    // taken into account for the last row so all memory actually used by the
+    // texture will be loaded, and may be bigger than the distance between array
+    // slices or levels. The purpose of this parameter is to make the memory
+    // amount that needs to be resident as close to the real amount as possible,
+    // to make sure all the needed data will be read, but also, if possible,
+    // unneeded memory pages won't be accessed (since that may trigger an access
+    // violation on the CPU).
     uint32_t array_slice_data_extent_bytes;
     // Including all array slices.
     uint32_t level_data_extent_bytes;
@@ -335,6 +336,13 @@ constexpr bool IsAnySignSigned(uint8_t packed_signs) {
       packed_signs ^ (uint32_t(xenos::TextureSign::kSigned) * 0b01010101);
   return ((xor_signed | (xor_signed >> 1)) & 0b01010101) != 0b01010101;
 }
+
+// Returns normalized clamp modes specified in the fetch constant based on the
+// texture data dimension in it.
+void GetClampModesForDimension(const xenos::xe_gpu_texture_fetch_t& fetch,
+                               xenos::ClampMode& clamp_x_out,
+                               xenos::ClampMode& clamp_y_out,
+                               xenos::ClampMode& clamp_z_out);
 
 }  // namespace texture_util
 }  // namespace gpu

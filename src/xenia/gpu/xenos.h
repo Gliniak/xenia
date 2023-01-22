@@ -72,8 +72,21 @@ enum class PrimitiveType : uint32_t {
   k2DTriStrip = 0x16,
 
   // Tessellation patches when VGT_OUTPUT_PATH_CNTL::path_select is
-  // VGTOutputPath::kTessellationEnable. The vertex shader receives patch index
-  // rather than control point indices.
+  // VGTOutputPath::kTessellationEnable. The vertex shader receives the patch
+  // index rather than control point indices.
+  // With non-adaptive tessellation, VGT_DRAW_INITIATOR::num_indices is the
+  // patch count (4D5307F1 draws single ground patches by passing 1 as the index
+  // count). VGT_INDX_OFFSET is also applied to the patch index - 4D5307F1 uses
+  // auto-indexed patches with a nonzero VGT_INDX_OFFSET, which contains the
+  // base patch index there.
+  // With adaptive tessellation, however, num_indices is the number of
+  // tessellation factors in the "index buffer" reused for tessellation factors,
+  // which is the patch count multiplied by the edge count (if num_indices is
+  // multiplied further by 4 for quad patches for the ground in 4D5307F2, for
+  // example, some incorrect patches are drawn, so Xenia shouldn't do that; also
+  // 4D5307E6 draws water triangle patches with the number of indices that is 3
+  // times the invocation count of the memexporting shader that calculates the
+  // tessellation factors for a single patch for each "point").
   kLinePatch = 0x10,
   kTrianglePatch = 0x11,
   kQuadPatch = 0x12,
@@ -99,6 +112,11 @@ enum class ClampMode : uint32_t {
   kMirrorClampToBorder = 7,
 };
 
+constexpr bool ClampModeUsesBorder(ClampMode clamp_mode) {
+  return clamp_mode == ClampMode::kClampToBorder ||
+         clamp_mode == ClampMode::kMirrorClampToBorder;
+}
+
 // TEX_FORMAT_COMP, known as GPUSIGN on the Xbox 360.
 enum class TextureSign : uint32_t {
   kUnsigned = 0,
@@ -113,7 +131,9 @@ enum class TextureSign : uint32_t {
 enum class TextureFilter : uint32_t {
   kPoint = 0,
   kLinear = 1,
-  kBaseMap = 2,  // Only applicable for mip-filter - always fetch from level 0.
+  // Only applicable to the mip filter - like OpenGL minification filters
+  // GL_NEAREST / GL_LINEAR without MIPMAP_NEAREST / MIPMAP_LINEAR.
+  kBaseMap = 2,
   kUseFetchConst = 3,
 };
 
@@ -128,10 +148,17 @@ enum class AnisoFilter : uint32_t {
 };
 
 enum class BorderColor : uint32_t {
-  k_AGBR_Black = 0,
-  k_AGBR_White = 1,
-  k_ACBYCR_BLACK = 2,
-  k_ACBCRY_BLACK = 3,
+  // (0.0, 0.0, 0.0)
+  // TODO(Triang3l): Is the alpha 0 or 1?
+  k_ABGR_Black = 0,
+  // (1.0, 1.0, 1.0, 1.0)
+  k_ABGR_White = 1,
+  // Unknown precisely, but likely (0.5, 0.0, 0.5) for unsigned (Cr, Y, Cb)
+  // TODO(Triang3l): Real hardware border color, and is the alpha 0 or 1?
+  k_ACBYCR_Black = 2,
+  // Unknown precisely, but likely (0.0, 0.5, 0.5) for unsigned (Y, Cr, Cb)
+  // TODO(Triang3l): Real hardware border color, and is the alpha 0 or 1?
+  k_ACBCRY_Black = 3,
 };
 
 // For the tfetch instruction (not the fetch constant) and related instructions,
@@ -181,6 +208,7 @@ enum class Endian128 : uint32_t {
 
 enum class IndexFormat : uint32_t {
   kInt16,
+  // Not very common, but used for some world draws in 545407E0.
   kInt32,
 };
 
@@ -239,6 +267,23 @@ enum class SurfaceNumberFormat : uint32_t {
 // specific depth/stencil values by drawing to a depth buffer's memory through a
 // color render target (to reupload a depth/stencil surface previously evicted
 // from the EDRAM to the main memory, for instance).
+//
+// EDRAM addressing is circular - a render target may be backed by a EDRAM range
+// that extends beyond 2048 tiles, in which case, what would go to the tile 2048
+// will actually be in tile 0, tile 2049 will go to tile 1, and so on. 4D5307F1
+// heavily relies on this behavior for its depth buffer. Specifically, it's used
+// the following way:
+// - First, a depth-only 1120x720 2xMSAA pass is performed with the depth buffer
+//   in tiles [1008, 2268), or [1008, 2048) and [0, 220).
+// - Then, the depth buffer in [1008, 2268) is resolved into a texture, later
+//   used in screen-space effects.
+// - The upper 1120x576 bin is drawn into the color buffer in [0, 1008), using
+//   the [1008, 2016) portion of the previously populated depth buffer for early
+//   depth testing (there seems to be no true early Z on the Xenos, only early
+//   hi-Z, but still it possibly needs to be in sync with the per-sample depth
+//   buffer), and overwriting the tail of the previously filled depth buffer in
+//   [0, 220).
+// - The lower 1120x144 bin is drawn without the pregenerated depth buffer data.
 
 enum class MsaaSamples : uint32_t {
   k1X = 0,
@@ -336,8 +381,8 @@ float Float7e3To32(uint32_t f10);
 // Converts 24-bit unorm depth in the value (not clamping) to an IEEE-754 32-bit
 // floating-point number.
 // Converts an IEEE-754 32-bit floating-point number to Xenos floating-point
-// depth, rounding to the nearest even.
-uint32_t Float32To20e4(float f32);
+// depth, rounding to the nearest even or towards zero.
+uint32_t Float32To20e4(float f32, bool round_to_nearest_even);
 // Converts Xenos floating-point depth in bits 0:23 (not clamping) to an
 // IEEE-754 32-bit floating-point number.
 float Float20e4To32(uint32_t f24);
@@ -374,9 +419,9 @@ constexpr uint32_t kEdramSizeBytes = kEdramTileCount * kEdramTileHeightSamples *
 
 // RB_SURFACE_INFO::surface_pitch width.
 constexpr uint32_t kEdramPitchPixelsBits = 14;
-// RB_COLOR_INFO::color_base/RB_DEPTH_INFO::depth_base width (though for the
-// Xbox 360 only 11 make sense, but to avoid bounds checks).
-constexpr uint32_t kEdramBaseTilesBits = 12;
+// The part of RB_COLOR_INFO::color_base and RB_DEPTH_INFO::depth_base width
+// usable on the Xenos, which has periodic 11-bit EDRAM tile addressing.
+constexpr uint32_t kEdramBaseTilesBits = 11;
 
 constexpr uint32_t GetSurfacePitchTiles(uint32_t pitch_pixels,
                                         MsaaSamples msaa_samples,
@@ -713,6 +758,16 @@ enum class ArbitraryFilter : uint32_t {
   k4x4Asym = 5,
   kUseFetchConst = 7,
 };
+
+// While instructions contain 6-bit register index fields (allowing literal
+// indices, or literal index offsets, depending on the addressing mode, of up to
+// 63), the maximum total register count for a vertex and a pixel shader
+// combined is 128, and the boundary between vertex and pixel shaders can be
+// moved via SQ_PROGRAM_CNTL::VS/PS_NUM_REG, according to the IPR2015-00325
+// specification (section 8 "Register file allocation").
+constexpr uint32_t kMaxShaderTempRegistersLog2 = 7;
+constexpr uint32_t kMaxShaderTempRegisters = UINT32_C(1)
+                                             << kMaxShaderTempRegistersLog2;
 
 // a2xx_sq_ps_vtx_mode
 enum class VertexShaderExportMode : uint32_t {

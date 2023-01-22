@@ -368,7 +368,7 @@ void DebugWindow::DrawSourcePane() {
   ImGui::PushButtonRepeat(true);
   bool can_step = !cache_.is_running && state_.thread_info;
   if (ImGui::ButtonEx("Step PPC", ImVec2(0, 0),
-                      can_step ? 0 : ImGuiButtonFlags_Disabled)) {
+                      can_step ? 0 : ImGuiItemFlags_Disabled)) {
     // By enabling the button when stepping we allow repeat behavior.
     if (processor_->execution_state() != cpu::ExecutionState::kStepping) {
       processor_->StepGuestInstruction(state_.thread_info->thread_id);
@@ -386,7 +386,7 @@ void DebugWindow::DrawSourcePane() {
     ImGui::SameLine();
     ImGui::PushButtonRepeat(true);
     if (ImGui::ButtonEx("Step x64", ImVec2(0, 0),
-                        can_step ? 0 : ImGuiButtonFlags_Disabled)) {
+                        can_step ? 0 : ImGuiItemFlags_Disabled)) {
       // By enabling the button when stepping we allow repeat behavior.
       if (processor_->execution_state() != cpu::ExecutionState::kStepping) {
         processor_->StepHostInstruction(state_.thread_info->thread_id);
@@ -960,7 +960,7 @@ void DebugWindow::DrawRegistersPane() {
         auto reg = static_cast<X64Register>(i);
         ImGui::BeginGroup();
         ImGui::AlignTextToFramePadding();
-        ImGui::Text("%3s", X64Context::GetRegisterName(reg));
+        ImGui::Text("%3s", HostThreadContext::GetRegisterName(reg));
         ImGui::SameLine();
         ImGui::Dummy(ImVec2(4, 0));
         ImGui::SameLine();
@@ -985,7 +985,7 @@ void DebugWindow::DrawRegistersPane() {
             static_cast<X64Register>(static_cast<int>(X64Register::kXmm0) + i);
         ImGui::BeginGroup();
         ImGui::AlignTextToFramePadding();
-        ImGui::Text("%5s", X64Context::GetRegisterName(reg));
+        ImGui::Text("%5s", HostThreadContext::GetRegisterName(reg));
         ImGui::SameLine();
         ImGui::Dummy(ImVec2(4, 0));
         ImGui::SameLine();
