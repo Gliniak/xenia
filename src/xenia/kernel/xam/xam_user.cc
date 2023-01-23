@@ -228,9 +228,9 @@ uint32_t XamUserReadProfileSettingsEx(uint32_t title_id, uint32_t user_index,
   // 0xfffe07d1 = profile?
   if (!kernel_state()->IsUserSignedIn(user_index)) {
     if (overlapped) {
-    kernel_state()->CompleteOverlappedImmediate(
-        kernel_state()->memory()->HostToGuestVirtual(overlapped),
-                                                  X_ERROR_NO_SUCH_USER);
+      kernel_state()->CompleteOverlappedImmediate(
+          kernel_state()->memory()->HostToGuestVirtual(overlapped),
+          X_ERROR_NO_SUCH_USER);
       return X_ERROR_IO_PENDING;
     }
     return X_ERROR_NO_SUCH_USER;
@@ -246,7 +246,7 @@ uint32_t XamUserReadProfileSettingsEx(uint32_t title_id, uint32_t user_index,
   bool any_missing = false;
   for (uint32_t i = 0; i < setting_count; ++i) {
     auto setting_id = static_cast<uint32_t>(setting_ids[i]);
-    auto setting = user_profile->GetSetting(setting_id);
+    auto setting = user_profile->GetSetting(user_index, setting_id);
     if (!setting) {
       any_missing = true;
       XELOGE(
@@ -277,7 +277,7 @@ uint32_t XamUserReadProfileSettingsEx(uint32_t title_id, uint32_t user_index,
       needed_header_size);
   for (uint32_t n = 0; n < setting_count; ++n) {
     uint32_t setting_id = setting_ids[n];
-    auto setting = user_profile->GetSetting(setting_id);
+    auto setting = user_profile->GetSetting(user_index, setting_id);
 
     std::memset(out_setting, 0, sizeof(X_USER_PROFILE_SETTING));
     out_setting->from = !setting || !setting->is_set   ? 0
@@ -333,16 +333,6 @@ dword_result_t XamUserWriteProfileSettings_entry(
     return X_ERROR_INVALID_PARAMETER;
   }
 
-  // Skip writing data about users with id != 0 they're not supported
-  if (user_index > 0) {
-    if (overlapped) {
-      kernel_state()->CompleteOverlappedImmediate(
-          kernel_state()->memory()->HostToGuestVirtual(overlapped),
-          X_ERROR_NO_SUCH_USER);
-      return X_ERROR_IO_PENDING;
-    }
-    return X_ERROR_SUCCESS;
-  }
   // Update and save settings.
   const auto& user_profile = kernel_state()->user_profile(user_index);
 
@@ -377,8 +367,8 @@ dword_result_t XamUserWriteProfileSettings_entry(
           bytes.resize(binary_size, 0);
         }
         user_profile->AddSetting(
-            std::make_unique<xam::UserProfile::BinarySetting>(
-                setting.setting_id, bytes));
+            user_index, std::make_unique<xam::UserProfile::BinarySetting>(
+                            setting.setting_id, bytes));
       } break;
       case UserProfile::Setting::Type::WSTRING:
       case UserProfile::Setting::Type::DOUBLE:
@@ -527,7 +517,8 @@ dword_result_t XamShowSigninUI_entry(dword_t unk, dword_t unk_mask) {
   // Mask values vary. Probably matching user types? Local/remote?
   // Games seem to sit and loop until we trigger this notification:
   // XN_SYS_SIGNINCHANGED
-  kernel_state()->BroadcastNotification(0xA, kernel_state()->GetConnectedUsers());
+  kernel_state()->BroadcastNotification(0xA,
+                                        kernel_state()->GetConnectedUsers());
   // XN_SYS_UI (off)
   kernel_state()->BroadcastNotification(0x00000009, 0);
   return X_ERROR_SUCCESS;

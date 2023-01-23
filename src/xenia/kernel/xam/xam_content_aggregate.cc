@@ -112,10 +112,26 @@ dword_result_t XamContentAggregateCreateEnumerator_entry(qword_t xuid,
                 std::back_inserter(title_ids));
     }
 
+    uint8_t user_index = 0xFF;
+    // Find user with xuid
+    // This should be done via ProfileManager, but we don't have it yet!
+    for (uint8_t i = 0; i < 4; i++) {
+      const auto user_profile = kernel_state()->user_profile(i);
+      if (!user_profile) {
+        continue;
+      }
+
+      if (user_profile->xuid() == xuid) {
+        user_index = i;
+        break;
+      }
+    }
+
     for (auto& title_id : title_ids) {
       // Get all content data.
       auto content_datas = kernel_state()->content_manager()->ListContent(
-          static_cast<uint32_t>(DummyDeviceId::HDD), content_type_enum,
+          static_cast<uint32_t>(DummyDeviceId::HDD),
+          user_index, content_type_enum,
           title_id);
       for (const auto& content_data : content_datas) {
         auto item = e->AppendItem();

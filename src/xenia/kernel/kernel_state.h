@@ -116,6 +116,11 @@ class KernelState {
   }
 
   xam::UserProfile* user_profile(uint8_t index) const {
+    // Bit of a hack. Normally index 0xFF points to currently used profile and
+    // 0xFE points to previously used profile or something in that manner
+    if (index == 0xFF || index == 0xFE) {
+      index = 0;
+    }
     return user_profiles_.at(index).get();
   }
 

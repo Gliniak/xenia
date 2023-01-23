@@ -58,28 +58,30 @@ ContentManager::ContentManager(KernelState* kernel_state,
 ContentManager::~ContentManager() = default;
 
 std::filesystem::path ContentManager::ResolvePackageRoot(
-    XContentType content_type, uint32_t title_id) {
+    uint8_t user_index, XContentType content_type, uint32_t title_id) {
   if (title_id == kCurrentlyRunningTitleId) {
     title_id = kernel_state_->title_id();
   }
   auto title_id_str = fmt::format("{:08X}", title_id);
   auto content_type_str = fmt::format("{:08X}", uint32_t(content_type));
-
+  auto username_str = kernel_state_->user_profile(user_index)->name();
   // Package root path:
   // content_root/title_id/content_type/
-  return root_path_ / title_id_str / content_type_str;
+  return root_path_ / username_str / title_id_str / content_type_str;
 }
 
 std::filesystem::path ContentManager::ResolvePackagePath(
-    const XCONTENT_AGGREGATE_DATA& data) {
+    const uint8_t user_index, const XCONTENT_AGGREGATE_DATA& data) {
   // Content path:
   // content_root/title_id/content_type/data_file_name/
-  auto package_root = ResolvePackageRoot(data.content_type, data.title_id);
+  auto package_root =
+      ResolvePackageRoot(user_index, data.content_type, data.title_id);
   return package_root / xe::to_path(data.file_name());
 }
 
 std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
-    uint32_t device_id, XContentType content_type, uint32_t title_id) {
+    uint32_t device_id, uint8_t user_index, XContentType content_type,
+    uint32_t title_id) {
   std::vector<XCONTENT_AGGREGATE_DATA> result;
 
   if (title_id == kCurrentlyRunningTitleId) {
@@ -88,7 +90,7 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
 
   // Search path:
   // content_root/title_id/type_name/*
-  auto package_root = ResolvePackageRoot(content_type, title_id);
+  auto package_root = ResolvePackageRoot(user_index, content_type, title_id);
   auto file_infos = xe::filesystem::ListFiles(package_root);
   for (const auto& file_info : file_infos) {
     if (file_info.type != xe::filesystem::FileInfo::Type::kDirectory) {
@@ -108,8 +110,9 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
 }
 
 std::unique_ptr<ContentPackage> ContentManager::ResolvePackage(
-    const std::string_view root_name, const XCONTENT_AGGREGATE_DATA& data) {
-  auto package_path = ResolvePackagePath(data);
+    const std::string_view root_name, const uint8_t user_index,
+    const XCONTENT_AGGREGATE_DATA& data) {
+  auto package_path = ResolvePackagePath(user_index, data);
   if (!std::filesystem::exists(package_path)) {
     return nullptr;
   }
@@ -121,12 +124,14 @@ std::unique_ptr<ContentPackage> ContentManager::ResolvePackage(
   return package;
 }
 
-bool ContentManager::ContentExists(const XCONTENT_AGGREGATE_DATA& data) {
-  auto path = ResolvePackagePath(data);
+bool ContentManager::ContentExists(const uint8_t user_index,
+                                   const XCONTENT_AGGREGATE_DATA& data) {
+  auto path = ResolvePackagePath(user_index, data);
   return std::filesystem::exists(path);
 }
 
 X_RESULT ContentManager::CreateContent(const std::string_view root_name,
+                                       const uint8_t user_index,
                                        const XCONTENT_AGGREGATE_DATA& data) {
   auto global_lock = global_critical_region_.Acquire();
 
@@ -135,7 +140,7 @@ X_RESULT ContentManager::CreateContent(const std::string_view root_name,
     return X_ERROR_ALREADY_EXISTS;
   }
 
-  auto package_path = ResolvePackagePath(data);
+  auto package_path = ResolvePackagePath(user_index, data);
   if (std::filesystem::exists(package_path)) {
     // Exists, must not!
     return X_ERROR_ALREADY_EXISTS;
@@ -145,7 +150,7 @@ X_RESULT ContentManager::CreateContent(const std::string_view root_name,
     return X_ERROR_ACCESS_DENIED;
   }
 
-  auto package = ResolvePackage(root_name, data);
+  auto package = ResolvePackage(root_name, user_index, data);
   assert_not_null(package);
 
   open_packages_.insert({string_key::create(root_name), package.release()});
@@ -154,6 +159,7 @@ X_RESULT ContentManager::CreateContent(const std::string_view root_name,
 }
 
 X_RESULT ContentManager::OpenContent(const std::string_view root_name,
+                                     const uint8_t user_index,
                                      const XCONTENT_AGGREGATE_DATA& data) {
   auto global_lock = global_critical_region_.Acquire();
 
@@ -162,14 +168,14 @@ X_RESULT ContentManager::OpenContent(const std::string_view root_name,
     return X_ERROR_ALREADY_EXISTS;
   }
 
-  auto package_path = ResolvePackagePath(data);
+  auto package_path = ResolvePackagePath(user_index, data);
   if (!std::filesystem::exists(package_path)) {
     // Does not exist, must be created.
     return X_ERROR_FILE_NOT_FOUND;
   }
 
   // Open package.
-  auto package = ResolvePackage(root_name, data);
+  auto package = ResolvePackage(root_name, user_index, data);
   assert_not_null(package);
 
   open_packages_.insert({string_key::create(root_name), package.release()});
@@ -194,9 +200,10 @@ X_RESULT ContentManager::CloseContent(const std::string_view root_name) {
 }
 
 X_RESULT ContentManager::GetContentThumbnail(
-    const XCONTENT_AGGREGATE_DATA& data, std::vector<uint8_t>* buffer) {
+    const uint8_t user_index, const XCONTENT_AGGREGATE_DATA& data,
+    std::vector<uint8_t>* buffer) {
   auto global_lock = global_critical_region_.Acquire();
-  auto package_path = ResolvePackagePath(data);
+  auto package_path = ResolvePackagePath(user_index, data);
   auto thumb_path = package_path / kThumbnailFileName;
   if (std::filesystem::exists(thumb_path)) {
     auto file = xe::filesystem::OpenFile(thumb_path, "rb");
@@ -213,9 +220,10 @@ X_RESULT ContentManager::GetContentThumbnail(
 }
 
 X_RESULT ContentManager::SetContentThumbnail(
-    const XCONTENT_AGGREGATE_DATA& data, std::vector<uint8_t> buffer) {
+    const uint8_t user_index, const XCONTENT_AGGREGATE_DATA& data,
+    std::vector<uint8_t> buffer) {
   auto global_lock = global_critical_region_.Acquire();
-  auto package_path = ResolvePackagePath(data);
+  auto package_path = ResolvePackagePath(user_index, data);
   std::filesystem::create_directories(package_path);
   if (std::filesystem::exists(package_path)) {
     auto thumb_path = package_path / kThumbnailFileName;
@@ -228,7 +236,8 @@ X_RESULT ContentManager::SetContentThumbnail(
   }
 }
 
-X_RESULT ContentManager::DeleteContent(const XCONTENT_AGGREGATE_DATA& data) {
+X_RESULT ContentManager::DeleteContent(const uint8_t user_index,
+                                       const XCONTENT_AGGREGATE_DATA& data) {
   auto global_lock = global_critical_region_.Acquire();
 
   if (IsContentOpen(data)) {
@@ -236,7 +245,7 @@ X_RESULT ContentManager::DeleteContent(const XCONTENT_AGGREGATE_DATA& data) {
     return X_ERROR_ACCESS_DENIED;
   }
 
-  auto package_path = ResolvePackagePath(data);
+  auto package_path = ResolvePackagePath(user_index, data);
   if (std::filesystem::remove_all(package_path) > 0) {
     return X_ERROR_SUCCESS;
   } else {
@@ -244,13 +253,19 @@ X_RESULT ContentManager::DeleteContent(const XCONTENT_AGGREGATE_DATA& data) {
   }
 }
 
-std::filesystem::path ContentManager::ResolveGameUserContentPath() {
-  auto title_id = fmt::format("{:08X}", kernel_state_->title_id());
-  auto user_name = xe::to_path(kernel_state_->user_profile(0)->name());
+std::filesystem::path ContentManager::ResolveGameUserContentPath(
+    const uint8_t user_index) {
+  const std::string title_id = fmt::format("{:08X}", kernel_state_->title_id());
+  const UserProfile* user = kernel_state_->user_profile(user_index);
+  if (!user) {
+    // What now?
+    return root_path_ / title_id / kGameUserContentDirName;
+  }
 
+  const std::string user_name = user->name();
   // Per-game per-profile data location:
   // content_root/title_id/profile/user_name
-  return root_path_ / title_id / kGameUserContentDirName / user_name;
+  return root_path_ / user_name / title_id / kGameUserContentDirName;
 }
 
 bool ContentManager::IsContentOpen(const XCONTENT_AGGREGATE_DATA& data) const {

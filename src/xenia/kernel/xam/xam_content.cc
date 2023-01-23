@@ -96,7 +96,7 @@ dword_result_t XamContentCreateEnumerator_entry(
   if (!device_info || device_info->device_id == DummyDeviceId::HDD) {
     // Get all content data.
     auto content_datas = kernel_state()->content_manager()->ListContent(
-        static_cast<uint32_t>(DummyDeviceId::HDD),
+        static_cast<uint32_t>(DummyDeviceId::HDD), user_index,
         XContentType(uint32_t(content_type)));
     for (const auto& content_data : content_datas) {
       auto item = e->AppendItem();
@@ -139,7 +139,7 @@ dword_result_t xeXamContentCreate(dword_t user_index, lpstring_t root_name,
     *disposition_ptr = 0;
   }
 
-  auto run = [content_manager, root_name = root_name.value(), flags,
+  auto run = [content_manager, root_name = root_name.value(), user_index, flags,
               content_data, disposition_ptr, license_mask_ptr](
                  uint32_t& extended_error, uint32_t& length) -> X_RESULT {
     X_RESULT result = X_ERROR_INVALID_PARAMETER;
@@ -148,7 +148,7 @@ dword_result_t xeXamContentCreate(dword_t user_index, lpstring_t root_name,
     switch (flags & 0xF) {
       case 1:  // CREATE_NEW
                // Fail if exists.
-        if (content_manager->ContentExists(content_data)) {
+        if (content_manager->ContentExists(user_index, content_data)) {
           result = X_ERROR_ALREADY_EXISTS;
         } else {
           create = true;
@@ -156,8 +156,8 @@ dword_result_t xeXamContentCreate(dword_t user_index, lpstring_t root_name,
         break;
       case 2:  // CREATE_ALWAYS
                // Overwrite existing, if any.
-        if (content_manager->ContentExists(content_data)) {
-          content_manager->DeleteContent(content_data);
+        if (content_manager->ContentExists(user_index, content_data)) {
+          content_manager->DeleteContent(user_index, content_data);
           create = true;
         } else {
           create = true;
@@ -165,7 +165,7 @@ dword_result_t xeXamContentCreate(dword_t user_index, lpstring_t root_name,
         break;
       case 3:  // OPEN_EXISTING
                // Open only if exists.
-        if (!content_manager->ContentExists(content_data)) {
+        if (!content_manager->ContentExists(user_index, content_data)) {
           result = X_ERROR_PATH_NOT_FOUND;
         } else {
           open = true;
@@ -173,7 +173,7 @@ dword_result_t xeXamContentCreate(dword_t user_index, lpstring_t root_name,
         break;
       case 4:  // OPEN_ALWAYS
                // Create if needed.
-        if (!content_manager->ContentExists(content_data)) {
+        if (!content_manager->ContentExists(user_index, content_data)) {
           create = true;
         } else {
           open = true;
@@ -181,10 +181,10 @@ dword_result_t xeXamContentCreate(dword_t user_index, lpstring_t root_name,
         break;
       case 5:  // TRUNCATE_EXISTING
                // Fail if doesn't exist, if does exist delete and recreate.
-        if (!content_manager->ContentExists(content_data)) {
+        if (!content_manager->ContentExists(user_index, content_data)) {
           result = X_ERROR_PATH_NOT_FOUND;
         } else {
-          content_manager->DeleteContent(content_data);
+          content_manager->DeleteContent(user_index, content_data);
           create = true;
         }
         break;
@@ -203,9 +203,11 @@ dword_result_t xeXamContentCreate(dword_t user_index, lpstring_t root_name,
     }
 
     if (create) {
-      result = content_manager->CreateContent(root_name, content_data);
+      result =
+          content_manager->CreateContent(root_name, user_index, content_data);
     } else if (open) {
-      result = content_manager->OpenContent(root_name, content_data);
+      result =
+          content_manager->OpenContent(root_name, user_index, content_data);
     }
 
     if (license_mask_ptr && XSUCCEEDED(result)) {
@@ -306,8 +308,8 @@ dword_result_t XamContentGetCreator_entry(dword_t user_index,
 
   XCONTENT_AGGREGATE_DATA content_data = *content_data_ptr.as<XCONTENT_DATA*>();
 
-  bool content_exists =
-      kernel_state()->content_manager()->ContentExists(content_data);
+  bool content_exists = kernel_state()->content_manager()->ContentExists(
+      user_index, content_data);
 
   if (content_exists) {
     if (content_data.content_type == XContentType::kSavedGame) {
@@ -352,7 +354,7 @@ dword_result_t XamContentGetThumbnail_entry(dword_t user_index,
   // Get thumbnail (if it exists).
   std::vector<uint8_t> buffer;
   auto result = kernel_state()->content_manager()->GetContentThumbnail(
-      content_data, &buffer);
+      user_index, content_data, &buffer);
 
   *buffer_size_ptr = uint32_t(buffer.size());
 
@@ -390,7 +392,7 @@ dword_result_t XamContentSetThumbnail_entry(dword_t user_index,
   auto buffer = std::vector<uint8_t>((uint8_t*)buffer_ptr,
                                      (uint8_t*)buffer_ptr + buffer_size);
   auto result = kernel_state()->content_manager()->SetContentThumbnail(
-      content_data, std::move(buffer));
+      user_index, content_data, std::move(buffer));
 
   if (overlapped_ptr) {
     kernel_state()->CompleteOverlappedImmediate(overlapped_ptr, result);
@@ -406,7 +408,8 @@ dword_result_t XamContentDelete_entry(dword_t user_index,
                                       lpunknown_t overlapped_ptr) {
   XCONTENT_AGGREGATE_DATA content_data = *content_data_ptr.as<XCONTENT_DATA*>();
 
-  auto result = kernel_state()->content_manager()->DeleteContent(content_data);
+  auto result = kernel_state()->content_manager()->DeleteContent(user_index,
+                                                                 content_data);
 
   if (overlapped_ptr) {
     kernel_state()->CompleteOverlappedImmediate(overlapped_ptr, result);

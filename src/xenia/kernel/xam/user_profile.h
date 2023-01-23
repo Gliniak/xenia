@@ -229,8 +229,8 @@ class UserProfile {
   uint32_t signin_state() const { return 1; }
   uint32_t type() const { return 1 | 2; /* local | online profile? */ }
 
-  void AddSetting(std::unique_ptr<Setting> setting);
-  Setting* GetSetting(uint32_t setting_id);
+  void AddSetting(const uint8_t user_index, std::unique_ptr<Setting> setting);
+  Setting* GetSetting(const uint8_t user_index, const uint32_t setting_id);
 
  private:
   uint64_t xuid_;
@@ -238,8 +238,8 @@ class UserProfile {
   std::vector<std::unique_ptr<Setting>> setting_list_;
   std::unordered_map<uint32_t, Setting*> settings_;
 
-  void LoadSetting(UserProfile::Setting*);
-  void SaveSetting(UserProfile::Setting*);
+  void LoadSetting(const uint8_t user_index, UserProfile::Setting*);
+  void SaveSetting(const uint8_t user_index, UserProfile::Setting*);
 };
 
 }  // namespace xam

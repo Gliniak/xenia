@@ -141,32 +141,40 @@ class ContentManager {
                  const std::filesystem::path& root_path);
   ~ContentManager();
 
-  std::vector<XCONTENT_AGGREGATE_DATA> ListContent(uint32_t device_id,
-                                                   XContentType content_type,
-                                                   uint32_t title_id = -1);
+  std::vector<XCONTENT_AGGREGATE_DATA> ListContent(
+      const uint32_t device_id, const uint8_t user_index,
+      const XContentType content_type, uint32_t title_id = -1);
 
   std::unique_ptr<ContentPackage> ResolvePackage(
-      const std::string_view root_name, const XCONTENT_AGGREGATE_DATA& data);
+      const std::string_view root_name, const uint8_t user_index,
+      const XCONTENT_AGGREGATE_DATA& data);
 
-  bool ContentExists(const XCONTENT_AGGREGATE_DATA& data);
+  bool ContentExists(const uint8_t user_index, const XCONTENT_AGGREGATE_DATA& data);
   X_RESULT CreateContent(const std::string_view root_name,
+                         const uint8_t user_index,
                          const XCONTENT_AGGREGATE_DATA& data);
   X_RESULT OpenContent(const std::string_view root_name,
+                       const uint8_t user_index,
                        const XCONTENT_AGGREGATE_DATA& data);
   X_RESULT CloseContent(const std::string_view root_name);
-  X_RESULT GetContentThumbnail(const XCONTENT_AGGREGATE_DATA& data,
+  X_RESULT GetContentThumbnail(const uint8_t user_index,
+                               const XCONTENT_AGGREGATE_DATA& data,
                                std::vector<uint8_t>* buffer);
-  X_RESULT SetContentThumbnail(const XCONTENT_AGGREGATE_DATA& data,
+  X_RESULT SetContentThumbnail(const uint8_t user_index,
+                               const XCONTENT_AGGREGATE_DATA& data,
                                std::vector<uint8_t> buffer);
-  X_RESULT DeleteContent(const XCONTENT_AGGREGATE_DATA& data);
-  std::filesystem::path ResolveGameUserContentPath();
+  X_RESULT DeleteContent(const uint8_t user_index,
+                         const XCONTENT_AGGREGATE_DATA& data);
+  std::filesystem::path ResolveGameUserContentPath(const uint8_t user_index);
   bool IsContentOpen(const XCONTENT_AGGREGATE_DATA& data) const;
   void CloseOpenedFilesFromContent(const std::string_view root_name);
 
  private:
-  std::filesystem::path ResolvePackageRoot(XContentType content_type,
+  std::filesystem::path ResolvePackageRoot(const uint8_t user_index,
+                                           XContentType content_type,
                                            uint32_t title_id = -1);
-  std::filesystem::path ResolvePackagePath(const XCONTENT_AGGREGATE_DATA& data);
+  std::filesystem::path ResolvePackagePath(const uint8_t user_index,
+                                           const XCONTENT_AGGREGATE_DATA& data);
 
   KernelState* kernel_state_;
   std::filesystem::path root_path_;
