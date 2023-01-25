@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2020 Ben Vanik. All rights reserved.                             *
+ * Copyright 2022 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -128,6 +128,17 @@ Entry* VirtualFileSystem::ResolvePath(const std::string_view path) {
   const auto& device = *it;
   auto relative_path = normalized_path.substr(device->mount_path().size());
   return device->ResolvePath(relative_path);
+}
+
+Device* VirtualFileSystem::ResolveDevice(const std::string_view path) {
+  auto global_lock = global_critical_region_.Acquire();
+  for (auto it = devices_.begin(); it != devices_.end(); ++it) {
+    if ((*it)->mount_path() == path) {
+      return (*it).get();
+    }
+  }
+  XELOGE("ResolveDevice({}) failed - device not found", path);
+  return nullptr;
 }
 
 Entry* VirtualFileSystem::CreatePath(const std::string_view path,

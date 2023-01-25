@@ -7,7 +7,9 @@
  ******************************************************************************
  */
 
+#include "xenia/base/clock.h"
 #include "xenia/base/chrono.h"
+#include "xenia/vfs/devices/stfs_container_device.h"
 
 #define CATCH_CONFIG_ENABLE_CHRONO_STRINGMAKER
 #include "third_party/catch/include/catch.hpp"
@@ -142,6 +144,39 @@ TEST_CASE("WinSystemClock <-> steady_clock", "[clock_cast]") {
     auto duration = dur_bound(sty_clock::now() - start).count();
     auto error = std::abs((sty2 - sty).count());
     REQUIRE(error <= duration);
+  }
+}
+
+TEST_CASE("STFS Decode/Decode date and time", "[stfs_decode]") {
+  SECTION("10 June 2022 19:46:00 UTC - Decode") {
+    const uint16_t date = 0x54CA;
+    const uint16_t time = 0x9DBD;
+    const uint64_t result = 132993639580000000;
+
+    const uint64_t timestamp =
+        xe::vfs::decode_fat_timestamp(date, time);
+
+    REQUIRE(timestamp == result);
+  }
+
+  SECTION("10 June 2022 19:46:00 UTC - Encode") {
+    const uint16_t date_result = 0x54CA;
+    const uint16_t time_result = 0x9DBD;
+    const uint64_t timestamp = 132993639580000000;
+
+    const auto [date, time] = xe::vfs::encode_fat_timestamp(timestamp);
+
+    REQUIRE(date == date_result);
+    REQUIRE(time == time_result);
+  }
+
+  SECTION("Current timestamp UTC - Encode->Decode->Compare") {
+    const uint64_t filetime = Clock::QueryHostStfsTime();
+
+    const auto [date, time] = xe::vfs::encode_fat_timestamp(filetime);
+    const uint64_t filetime_result = xe::vfs::decode_fat_timestamp(date, time);
+
+    REQUIRE(filetime == filetime_result);
   }
 }
 

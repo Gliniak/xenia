@@ -30,6 +30,10 @@
 
 namespace xe {
 namespace kernel {
+namespace xboxkrnl {
+// xboxkrnl_xekeys.cc
+bool xeKeysLoadKeyVault();
+}  // namespace xboxkrnl
 
 constexpr uint32_t kDeferredOverlappedDelayMillis = 100;
 
@@ -91,18 +95,7 @@ KernelState::~KernelState() {
 
 KernelState* KernelState::shared() { return shared_kernel_state_; }
 
-uint32_t KernelState::title_id() const {
-  assert_not_null(executable_module_);
-
-  xex2_opt_execution_info* exec_info = 0;
-  executable_module_->GetOptHeader(XEX_HEADER_EXECUTION_INFO, &exec_info);
-
-  if (exec_info) {
-    return exec_info->title_id;
-  }
-
-  return 0;
-}
+uint32_t KernelState::title_id() const { return emulator_->title_id(); }
 
 util::XdbfGameData KernelState::title_xdbf() const {
   return module_xdbf(executable_module_);
@@ -269,6 +262,8 @@ object_ref<XThread> KernelState::LaunchModule(object_ref<UserModule> module) {
 
   SetExecutableModule(module);
   XELOGI("KernelState: Launching module...");
+
+  xboxkrnl::xeKeysLoadKeyVault();
 
   // Create a thread to run in.
   // We start suspended so we can run the debugger prep.

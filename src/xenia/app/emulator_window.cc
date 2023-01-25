@@ -864,7 +864,7 @@ void EmulatorWindow::ShowContentDirectory() {
   } else {
     // TODO(gibbed): expose this via ContentManager?
     auto title_id =
-        fmt::format("{:08X}", emulator_->kernel_state()->title_id());
+        fmt::format("{:08X}", emulator()->title_id());
     auto package_root = content_root / title_id;
     target_path = package_root;
   }

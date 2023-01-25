@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2013 Ben Vanik. All rights reserved.                             *
+ * Copyright 2022 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -19,6 +19,14 @@
 #include "xenia/vfs/device.h"
 #include "xenia/vfs/entry.h"
 #include "xenia/vfs/file.h"
+
+namespace xe {
+namespace kernel {
+namespace xam {
+class ContentPackage;
+}  // namespace xam
+}  // namespace kernel
+}  // namespace xe
 
 namespace xe {
 namespace vfs {
@@ -46,6 +54,11 @@ class VirtualFileSystem {
                     uint32_t desired_access, bool is_directory,
                     bool is_non_directory, File** out_file,
                     FileAction* out_action);
+
+ protected:
+  friend class xe::kernel::xam::ContentPackage;
+
+  Device* ResolveDevice(const std::string_view path);
 
  private:
   xe::global_critical_region global_critical_region_;

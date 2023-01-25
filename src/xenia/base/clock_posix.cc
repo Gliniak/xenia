@@ -49,6 +49,22 @@ uint64_t Clock::QueryHostSystemTime() {
       now.tv_usec * 10);
 }
 
+uint64_t Clock::QueryHostStfsTime() {
+  constexpr uint64_t seconds_per_day = 3600 * 24;
+  // Don't forget the 89 leap days.
+  constexpr uint64_t seconds_1601_to_1970 =
+      ((369 * 365 + 89) * seconds_per_day);
+
+  timeval now;
+  int error = gettimeofday(&now, nullptr);
+  assert_zero(error);
+
+  now.tv_sec -= now.tv_sec % 2;
+
+  return static_cast<uint64_t>(
+      (static_cast<int64_t>(now.tv_sec) + seconds_1601_to_1970) * 10000000ull;
+}
+
 uint64_t Clock::QueryHostUptimeMillis() {
   return host_tick_count_platform() * 1000 / host_tick_frequency_platform();
 }

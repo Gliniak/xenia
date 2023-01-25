@@ -12,6 +12,7 @@
 
 #include "xenia/base/string_util.h"
 #include "xenia/kernel/util/xex2_info.h"
+#include "xenia/xbox.h"
 
 namespace xe {
 namespace vfs {
@@ -39,6 +40,17 @@ enum class XContentPackageType : uint32_t {
 enum class XContentVolumeType : uint32_t {
   kStfs = 0,
   kSvod = 1,
+};
+
+enum XContentFlag : uint16_t {
+  kNoProfileTransfer = 0x10,
+  kNoDeviceTransfer = 0x20,
+  kStrongSigned = 0x40,
+  kAllowProfileTransfer = 0x80,
+  kManageStorage = 0x100,
+  kForceShowUI = 0x200,
+  kMoveOnlyTransfer = 0x800,
+  kEnumExcludeCommon = 0x1000
 };
 
 /* STFS structures */
@@ -76,20 +88,32 @@ struct StfsVolumeDescriptor {
   bool is_valid() const {
     return descriptor_length == sizeof(StfsVolumeDescriptor);
   }
+
+  void set_defaults() {
+    descriptor_length = sizeof(StfsVolumeDescriptor);
+    version = 0;
+    flags.as_byte = 0;
+    file_table_block_count = 0;
+    set_file_table_block_number(0);
+    memset(top_hash_table_hash, 0, 0x14);
+    total_block_count = free_block_count = 0;
+  }
 };
 static_assert_size(StfsVolumeDescriptor, 0x24);
 #pragma pack(pop)
 
 enum class StfsHashState : uint8_t {
-  kFree = 0,   // unallocated but doesn't exist in package (needs to expand)?
-  kFree2 = 1,  // unallocated but exists in package?
+  // TODO: find out difference between Free/Free2 & InUse/InUse2...
+  kFree = 0,
+  kFree2 = 1,
   kInUse = 2,
+  kInUse2 = 3
 };
 
 struct StfsHashEntry {
   uint8_t sha1[0x14];
 
-  xe::be<uint32_t> info_raw;
+  be<uint32_t> info_raw;
 
   uint32_t level0_next_block() const { return info_raw & 0xFFFFFF; }
   void set_level0_next_block(uint32_t value) {
@@ -103,11 +127,13 @@ struct StfsHashEntry {
     info_raw = (info_raw & ~0xC0000000) | (uint32_t(value) << 30);
   }
 
+  // Counts number of blocks with StfsHashState = kFree / 0
   uint32_t levelN_num_blocks_free() const { return info_raw & 0x7FFF; }
   void set_levelN_num_blocks_free(uint32_t value) {
     info_raw = (info_raw & ~0x7FFF) | (value & 0x7FFF);
   }
 
+  // Counts number of blocks with StfsHashState = kFree2 / 1 (0x40xxxxxx)
   uint32_t levelN_num_blocks_unk() const {
     return ((info_raw & 0x3FFF8000) >> 15) & 0x7FFF;
   }
@@ -129,7 +155,7 @@ static_assert_size(StfsHashEntry, 0x18);
 
 struct StfsHashTable {
   StfsHashEntry entries[170];
-  xe::be<uint32_t> num_blocks;  // num L0 blocks covered by this table?
+  be<uint32_t> num_blocks;  // num L0 blocks covered by this table?
   uint8_t padding[12];
 };
 static_assert_size(StfsHashTable, 0x1000);
@@ -212,14 +238,6 @@ struct SvodDeviceDescriptor {
 };
 static_assert_size(SvodDeviceDescriptor, 0x24);
 
-/* XContent structures */
-struct XContentLicense {
-  be<uint64_t> licensee_id;
-  be<uint32_t> license_bits;
-  be<uint32_t> license_flags;
-};
-static_assert_size(XContentLicense, 0x10);
-
 struct XContentMediaData {
   uint8_t series_id[0x10];
   uint8_t season_id[0x10];
@@ -238,18 +256,18 @@ struct XContentAvatarAssetData {
 static_assert_size(XContentAvatarAssetData, 0x24);
 
 struct XContentAttributes {
-  uint8_t profile_transfer : 1;
-  uint8_t device_transfer : 1;
-  uint8_t move_only_transfer : 1;
-  uint8_t kinect_enabled : 1;
-  uint8_t disable_network_storage : 1;
-  uint8_t deep_link_supported : 1;
   uint8_t reserved : 2;
+  uint8_t deep_link_supported : 1;
+  uint8_t disable_network_storage : 1;
+  uint8_t kinect_enabled : 1;
+  uint8_t move_only_transfer : 1;
+  uint8_t device_transfer : 1;
+  uint8_t profile_transfer : 1;
 };
 static_assert_size(XContentAttributes, 1);
 
 #pragma pack(push, 1)
-struct XContentMetadata {
+struct XContentPackageMetadata {
   static const uint32_t kThumbLengthV1 = 0x4000;
   static const uint32_t kThumbLengthV2 = 0x3D00;
 
@@ -436,12 +454,42 @@ struct XContentMetadata {
     string_util::copy_and_swap_truncating(title_name_raw.chars, value,
                                           countof(title_name_raw.chars));
   }
-};
-static_assert_size(XContentMetadata, 0x93D6);
 
-struct XContentHeader {
+  void set_flags(const XContentFlag flags) {
+    const bool profile_transfer =
+        ((flags & XContentFlag::kAllowProfileTransfer) &&
+         !(flags & XContentFlag::kNoProfileTransfer));
+    const bool move_only = (flags & XContentFlag::kMoveOnlyTransfer);
+    const bool no_device_transfer = (flags & XContentFlag::kNoDeviceTransfer);
+
+    this->flags.bits.profile_transfer = profile_transfer;
+    this->flags.bits.move_only_transfer = move_only;
+
+    // Not sure if device_transfer is meant to be set like this
+    this->flags.bits.device_transfer = !no_device_transfer;
+  }
+};
+static_assert_size(XContentPackageMetadata, 0x93D6);
+#pragma pack(pop)
+
+struct XContentLicense {
+  be<uint64_t> licensee_id;
+  be<uint32_t> license_bits;
+  be<uint32_t> license_flags;
+};
+static_assert_size(XContentLicense, 0x10);
+
+#pragma pack(push, 1)
+struct XContentPackageHeader {
   be<XContentPackageType> magic;
-  uint8_t signature[0x228];
+
+  union {
+    // signature used by LIVE/PIRS content packages
+    uint8_t online[0x228];
+    // signature used by CON (console-signed) savegame/profile packages
+    X_XE_CONSOLE_SIGNATURE console;
+  } signature;
+
   XContentLicense licenses[0x10];
   uint8_t content_id[0x14];
   be<uint32_t> header_size;
@@ -452,16 +500,66 @@ struct XContentHeader {
            magic == XContentPackageType::kPirs;
   }
 };
-static_assert_size(XContentHeader, 0x344);
+static_assert_size(XContentPackageHeader, 0x344);
 #pragma pack(pop)
 
-struct StfsHeader {
-  XContentHeader header;
-  XContentMetadata metadata;
-  // TODO: title/system updates contain more data after XContentMetadata, seems
-  // to affect header.header_size
+struct XContentMetadataTitleUpdate {
+  be<uint32_t> unknown;
+  be<uint32_t> new_version_raw;
+  uint8_t unused[0x15E8];
+
+  xex2_version new_version() const { return xex2_version{new_version_raw}; }
+
+  void set_new_version(xex2_version version) {
+    new_version_raw = version.value;
+  }
 };
-static_assert_size(StfsHeader, 0x971A);
+static_assert_size(XContentMetadataTitleUpdate, 0x15F0);
+
+// Only included in StfsHeader if header.header_size == 0xAD0E (LIVE/PIRS only)
+struct XContentPackageMetadataExtra {
+  be<uint32_t> metadata_type;
+  union {
+    XContentMetadataTitleUpdate title_update;
+    // TODO: system_update
+  } metadata;
+};
+static_assert_size(XContentPackageMetadataExtra, 0x15F4);
+
+#pragma pack(push, 1)
+struct XContentHeader {
+  static const uint32_t kMetadataOffset = sizeof(XContentPackageHeader);
+  static const uint32_t kSizeBasic = 0x971A;
+  static const uint32_t kSizeWithExtra =
+      kSizeBasic + sizeof(XContentPackageMetadataExtra);
+
+  XContentPackageHeader package_header;
+  XContentPackageMetadata metadata;
+
+  XContentPackageMetadataExtra extra_metadata;
+
+  bool has_extra_metadata() const {
+    return package_header.header_size > kSizeBasic;
+  }
+
+  void set_defaults() {
+    package_header.magic = XContentPackageType::kCon;
+
+    // Velocity needs a valid console-type set for it to load our packages
+    package_header.signature.console.console_certificate.console_type =
+        XConsoleType::Retail;
+
+    // CON doesn't contain XContentMetadataExtra
+    package_header.header_size =
+        sizeof(XContentHeader) - sizeof(XContentPackageMetadataExtra);
+
+    metadata.metadata_version = 2;
+    metadata.volume_type = XContentVolumeType::kStfs;
+    metadata.volume_descriptor.stfs.set_defaults();
+  }
+};
+static_assert_size(XContentHeader, 0xAD0E);
+#pragma pack(pop)
 
 }  // namespace vfs
 }  // namespace xe

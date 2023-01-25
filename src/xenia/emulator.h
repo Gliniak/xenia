@@ -20,6 +20,7 @@
 #include "xenia/base/delegate.h"
 #include "xenia/base/exception_handler.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/util/xdbf_utils.h"
 #include "xenia/memory.h"
 #include "xenia/vfs/virtual_file_system.h"
 #include "xenia/xbox.h"
@@ -112,6 +113,32 @@ class Emulator {
   // Currently running title ID
   uint32_t title_id() const {
     return !title_id_.has_value() ? 0 : title_id_.value();
+  }
+
+  const xe::kernel::util::XdbfBlock title_icon() const {
+    if (!kernel_state_) {
+      return xe::kernel::util::XdbfBlock();
+    }
+
+    auto db = kernel_state()->title_xdbf();
+    if (!db.is_valid()) {
+      return xe::kernel::util::XdbfBlock();
+    }
+
+    return db.icon();
+  }
+
+  const XLanguage title_language() const {
+    if (!kernel_state_) {
+      return XLanguage::kEnglish;
+    }
+
+    auto db = kernel_state()->title_xdbf();
+    if (!db.is_valid()) {
+      return XLanguage::kEnglish;
+    }
+
+    return db.default_language();
   }
 
   // Are we currently running a title?

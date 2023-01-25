@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2020 Ben Vanik. All rights reserved.                             *
+ * Copyright 2022 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -19,6 +19,7 @@
 #include "xenia/base/mutex.h"
 #include "xenia/base/string_key.h"
 #include "xenia/base/string_util.h"
+#include "xenia/vfs/devices/stfs_xbox.h"
 #include "xenia/xbox.h"
 
 namespace xe {
@@ -90,10 +91,10 @@ struct XCONTENT_DATA {
     padding[0] = padding[1] = 0;
   }
 };
-static_assert_size(XCONTENT_DATA, 0x134);
+static_assert_size(XCONTENT_DATA, 308);
 
 struct XCONTENT_AGGREGATE_DATA : XCONTENT_DATA {
-  be<uint64_t> unk134;  // some titles store XUID here?
+  be<uint64_t> profile_xuid;
   be<uint32_t> title_id;
 
   XCONTENT_AGGREGATE_DATA() = default;
@@ -103,7 +104,7 @@ struct XCONTENT_AGGREGATE_DATA : XCONTENT_DATA {
     set_display_name(other.display_name());
     set_file_name(other.file_name());
     padding[0] = padding[1] = 0;
-    unk134 = 0;
+    profile_xuid = 0;
     title_id = kCurrentlyRunningTitleId;
   }
 
@@ -113,21 +114,24 @@ struct XCONTENT_AGGREGATE_DATA : XCONTENT_DATA {
     return device_id == other.device_id && title_id == other.title_id &&
            content_type == other.content_type &&
            file_name() == other.file_name();
-  }
+  };
 };
 static_assert_size(XCONTENT_AGGREGATE_DATA, 0x148);
 
 class ContentPackage {
  public:
   ContentPackage(KernelState* kernel_state, const std::string_view root_name,
-                 const XCONTENT_AGGREGATE_DATA& data,
-                 const std::filesystem::path& package_path);
+                 const XCONTENT_AGGREGATE_DATA& data, const uint32_t flags,
+                 const std::filesystem::path& package_path,
+                 bool read_only = false);
   ~ContentPackage();
 
   const XCONTENT_AGGREGATE_DATA& GetPackageContentData() const {
     return content_data_;
   }
 
+  std::vector<uint8_t> GetThumbnail();
+  void SetThumbnail(std::vector<uint8_t> thumbnail);
  private:
   KernelState* kernel_state_;
   std::string root_name_;
@@ -146,11 +150,13 @@ class ContentManager {
                                                    uint32_t title_id = -1);
 
   std::unique_ptr<ContentPackage> ResolvePackage(
-      const std::string_view root_name, const XCONTENT_AGGREGATE_DATA& data);
+      const std::string_view root_name, const XCONTENT_AGGREGATE_DATA& data,
+      uint32_t flags = 0, bool read_only = false, bool create = false);
 
   bool ContentExists(const XCONTENT_AGGREGATE_DATA& data);
   X_RESULT CreateContent(const std::string_view root_name,
-                         const XCONTENT_AGGREGATE_DATA& data);
+                         const XCONTENT_AGGREGATE_DATA& data,
+                         uint32_t flags = 0);
   X_RESULT OpenContent(const std::string_view root_name,
                        const XCONTENT_AGGREGATE_DATA& data);
   X_RESULT CloseContent(const std::string_view root_name);
@@ -161,7 +167,6 @@ class ContentManager {
   X_RESULT DeleteContent(const XCONTENT_AGGREGATE_DATA& data);
   std::filesystem::path ResolveGameUserContentPath();
   bool IsContentOpen(const XCONTENT_AGGREGATE_DATA& data) const;
-  void CloseOpenedFilesFromContent(const std::string_view root_name);
 
  private:
   std::filesystem::path ResolvePackageRoot(XContentType content_type,

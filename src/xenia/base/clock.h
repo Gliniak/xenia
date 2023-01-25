@@ -47,6 +47,8 @@ class Clock {
   static uint64_t QueryHostTickCount();
   // Host time, in FILETIME format.
   static uint64_t QueryHostSystemTime();
+  // Host time, in FILETIME format with accuracy only to seconds for STFS packages.
+  static uint64_t QueryHostStfsTime();
   // Queries the milliseconds since the host began.
   static uint64_t QueryHostUptimeMillis();
 
