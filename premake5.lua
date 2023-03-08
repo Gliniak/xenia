@@ -24,6 +24,7 @@ includedirs({
 defines({
   "_UNICODE",
   "UNICODE",
+  'CURL_STATICLIB'
 })
 
 cppdialect("C++17")
@@ -249,11 +250,13 @@ workspace("xenia")
   include("third_party/cpptoml.lua")
   include("third_party/FFmpeg/premake5.lua")
   include("third_party/fmt.lua")
+  include("third_party/libcurl.lua")
   include("third_party/glslang-spirv.lua")
   include("third_party/imgui.lua")
   include("third_party/mspack.lua")
   include("third_party/snappy.lua")
   include("third_party/xxhash.lua")
+  include("third_party/rapidjson.lua")
 
   if not os.istarget("android") then
     -- SDL2 requires sdl2-config, and as of November 2020 isn't high-quality on
