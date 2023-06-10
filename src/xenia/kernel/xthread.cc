@@ -196,6 +196,10 @@ void XThread::InitializeGuestObject() {
   xe::store_and_swap<uint16_t>(p + 0x056, 1);
   xe::store_and_swap<uint32_t>(p + 0x05C, stack_base_);
   xe::store_and_swap<uint32_t>(p + 0x060, stack_limit_);
+  xe::store_and_swap<uint32_t>(p + 0x064, stack_base_ - 0xF0);
+
+  std::memset(memory()->TranslateVirtual(stack_base_ - 0xF0), 0, 0xF0);
+
   xe::store_and_swap<uint32_t>(p + 0x068, tls_static_address_);
   xe::store_and_swap<uint8_t>(p + 0x06C, 0);
   xe::store_and_swap<uint32_t>(p + 0x074, guest_object() + 0x074);
