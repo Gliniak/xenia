@@ -81,6 +81,12 @@ dword_result_t ObLookupThreadByThreadId_entry(dword_t thread_id,
 }
 DECLARE_XBOXKRNL_EXPORT1(ObLookupThreadByThreadId, kNone, kImplemented);
 
+dword_result_t ObLookupAnyThreadByThreadId_entry(dword_t thread_id,
+                                                 lpdword_t out_object_ptr) {
+  return ObLookupThreadByThreadId_entry(thread_id, out_object_ptr);
+}
+DECLARE_XBOXKRNL_EXPORT1(ObLookupAnyThreadByThreadId, kNone, kImplemented);
+
 dword_result_t ObReferenceObjectByHandle_entry(dword_t handle,
                                                dword_t object_type_ptr,
                                                lpdword_t out_object_ptr) {
