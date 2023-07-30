@@ -16,6 +16,8 @@
 #include <string>
 #include <utility>
 
+//#include "third_party/rapidjson/include/rapidjson/"
+#include "third_party/libcurl/include/curl/curl.h"
 #include "third_party/fmt/include/fmt/format.h"
 #include "third_party/imgui/imgui.h"
 #include "xenia/base/assert.h"
@@ -47,6 +49,11 @@ DECLARE_bool(debug);
 
 DEFINE_bool(fullscreen, false, "Whether to launch the emulator in fullscreen.",
             "Display");
+
+DEFINE_bool(
+    show_new_version_window, true,
+    "Show notification on start if there is new Xenia version available.",
+    "General");
 
 DEFINE_string(
     postprocess_antialiasing, "",
@@ -218,6 +225,13 @@ void EmulatorWindow::ShutdownGraphicsSystemPresenterPainting() {
   }
 }
 
+size_t WriteCallback(void* contents, size_t size, size_t nmemb,
+                     std::string* output) {
+  size_t totalSize = size * nmemb;
+  output->append(static_cast<char*>(contents), totalSize);
+  return totalSize;
+}
+
 void EmulatorWindow::OnEmulatorInitialized() {
   emulator_initialized_ = true;
   window_->SetMainMenuEnabled(true);
@@ -226,8 +240,27 @@ void EmulatorWindow::OnEmulatorInitialized() {
   if (cvars::fullscreen) {
     SetFullscreen(true);
   }
-}
 
+  if (cvars::show_new_version_window) {
+    // ToDo:
+    // Write checker if new version is available and open download page.
+    std::string json_result = "";
+
+    CURL* curl = curl_easy_init();
+    if (curl) {
+      curl_easy_setopt(curl, CURLOPT_URL, "https://api.github.com/repos/xenia-project/release-builds-windows/releases/latest");
+      curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+      curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+      curl_easy_setopt(curl, CURLOPT_WRITEDATA, &json_result);
+      CURLcode res = curl_easy_perform(curl);
+      curl_easy_cleanup(curl);
+    }
+    
+
+
+    ToggleDisplayXeniaNewVersionDialog();
+  }
+}
 void EmulatorWindow::EmulatorWindowListener::OnClosing(ui::UIEvent& e) {
   emulator_window_.app_context_.QuitFromUIThread();
 }
@@ -495,6 +528,52 @@ void EmulatorWindow::DisplayConfigDialog::OnDraw(ImGuiIO& io) {
   if (!dialog_open) {
     emulator_window_.ToggleDisplayConfigDialog();
     // `this` might have been destroyed by ToggleDisplayConfigDialog.
+    return;
+  }
+}
+
+void EmulatorWindow::DisplayXeniaNewVersionDialog::OnDraw(ImGuiIO& io) {
+  ImGui::SetNextWindowPos(ImVec2(200, 200), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(100, 100), ImGuiCond_FirstUseEver);
+  // Alpha from Dear ImGui tooltips (0.35 from the overlay provides too low
+  // visibility). Translucent so some effect of the changes can still be seen
+  // through it.
+  ImGui::SetNextWindowBgAlpha(0.8f);
+  bool dialog_open = true;
+  if (!ImGui::Begin("New version available!", &dialog_open,
+                    ImGuiWindowFlags_NoCollapse |
+                        ImGuiWindowFlags_AlwaysAutoResize |
+                        ImGuiWindowFlags_NoResize |
+                        ImGuiWindowFlags_NoMove)) {
+    ImGui::End();
+    return;
+  }
+  // Even if the close button has been pressed, still paint everything not to
+  // have one frame with an empty window.
+
+  // Prevent user confusion which has been reported multiple times.
+  ImGui::TextUnformatted("New version of Xenia is available online.");
+  ImGui::TextUnformatted("Do you want to download latest version? This will open new browser window.");
+
+  ImGui::Spacing();
+  ImGui::Spacing();
+
+  bool disable_new_version_notification = cvars::show_new_version_window;
+  if(ImGui::Checkbox("Don't show this message again",
+                      &disable_new_version_notification)) {
+    OVERRIDE_bool(show_new_version_window, disable_new_version_notification);
+  }
+
+  ImGui::Spacing();
+  ImGui::SameLine(ImGui::GetWindowWidth() - 120.f);
+  ImGui::Button("Yes", ImVec2(50, 30));
+  ImGui::SameLine();
+  ImGui::Button("No", ImVec2(50, 30));
+
+  ImGui::End();
+  if (!dialog_open) {
+    emulator_window_.ToggleDisplayXeniaNewVersionDialog();
+    // `this` might have been destroyed by ToggleDisplayXeniaNewVersionDialog.
     return;
   }
 }
@@ -939,6 +1018,15 @@ void EmulatorWindow::ToggleDisplayConfigDialog() {
         new DisplayConfigDialog(imgui_drawer_.get(), *this));
   } else {
     display_config_dialog_.reset();
+  }
+}
+
+void EmulatorWindow::ToggleDisplayXeniaNewVersionDialog() {
+  if (!display_new_version_dialog_) {
+    display_new_version_dialog_ = std::unique_ptr<DisplayXeniaNewVersionDialog>(
+        new DisplayXeniaNewVersionDialog(imgui_drawer_.get(), *this));
+  } else {
+    display_new_version_dialog_.reset();
   }
 }
 

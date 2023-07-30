@@ -105,6 +105,19 @@ class EmulatorWindow {
     EmulatorWindow& emulator_window_;
   };
 
+  class DisplayXeniaNewVersionDialog final : public ui::ImGuiDialog {
+   public:
+    DisplayXeniaNewVersionDialog(ui::ImGuiDrawer* imgui_drawer,
+                                 EmulatorWindow& emulator_window)
+        : ui::ImGuiDialog(imgui_drawer), emulator_window_(emulator_window) {}
+
+   protected:
+    void OnDraw(ImGuiIO& io) override;
+
+   private:
+    EmulatorWindow& emulator_window_;
+  };
+
   explicit EmulatorWindow(Emulator* emulator,
                           ui::WindowedAppContext& app_context);
 
@@ -139,6 +152,7 @@ class EmulatorWindow {
   void GpuTraceFrame();
   void GpuClearCaches();
   void ToggleDisplayConfigDialog();
+  void ToggleDisplayXeniaNewVersionDialog();
   void ShowCompatibility();
   void ShowFAQ();
   void ShowBuildCommit();
@@ -159,6 +173,7 @@ class EmulatorWindow {
   bool initializing_shader_storage_ = false;
 
   std::unique_ptr<DisplayConfigDialog> display_config_dialog_;
+  std::unique_ptr<DisplayXeniaNewVersionDialog> display_new_version_dialog_;
 };
 
 }  // namespace app
