@@ -22,5 +22,5 @@ project("libcurl")
   })
   files({
     "libcurl/lib/**.h",
-		"libcurl/lib/**.c"
+    "libcurl/lib/**.c"
   })
