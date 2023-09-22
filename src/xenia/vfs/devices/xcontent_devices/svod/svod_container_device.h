@@ -24,21 +24,23 @@
 
 namespace xe {
 namespace vfs {
+
 class SvodContainerDevice : public XContentContainerDevice {
  public:
   SvodContainerDevice(const std::string_view mount_path,
-                      const std::filesystem::path& host_path);
+                      const std::filesystem::path& host_path,
+                      const std::map<size_t, FILE*> data_files,
+                      VolumeDescriptor* volume_descriptor);
   ~SvodContainerDevice() override;
 
   bool is_read_only() const override { return true; }
 
-  uint32_t component_name_max_length() const override { return 255; }
-
   uint32_t total_allocation_units() const override {
-    return uint32_t(data_size() / sectors_per_allocation_unit() /
+    return uint32_t(files_total_size_ / sectors_per_allocation_unit() /
                     bytes_per_sector());
   }
-  uint32_t available_allocation_units() const override { return 0; }
+
+  void CloseFiles(){};
 
  private:
   enum class SvodLayoutType {
@@ -48,8 +50,6 @@ class SvodContainerDevice : public XContentContainerDevice {
     kSingleFile = 0x4,
   };
   const char* MEDIA_MAGIC = "MICROSOFT*XBOX*MEDIA";
-
-  Result LoadHostFiles(FILE* header_file) override;
 
   Result Read() override;
   Result ReadEntry(uint32_t sector, uint32_t ordinal,
@@ -62,13 +62,16 @@ class SvodContainerDevice : public XContentContainerDevice {
   Result SetNormalLayout(FILE* header, size_t& magic_offset);
 
   const bool IsEDGFLayout() const {
-    return header_->content_metadata.volume_descriptor.svod.features.bits
-        .enhanced_gdf_layout;
+    return volume_descriptor_->svod.features.bits.enhanced_gdf_layout;
   }
   const bool IsXSFLayout(FILE* header) const;
 
+  std::map<size_t, FILE*> files_;
+  size_t files_total_size_;
+
   size_t svod_base_offset_;
   SvodLayoutType svod_layout_;
+
 };
 
 }  // namespace vfs

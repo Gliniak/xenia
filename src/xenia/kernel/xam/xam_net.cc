@@ -238,7 +238,6 @@ dword_result_t NetDll_XNetRandom_entry(dword_t caller, lpvoid_t buffer_ptr,
   // For now, constant values.
   // This makes replicating things easier.
   std::memset(buffer_ptr, 0xBB, length);
-
   return 0;
 }
 DECLARE_XAM_EXPORT1(NetDll_XNetRandom, kNetworking, kStub);

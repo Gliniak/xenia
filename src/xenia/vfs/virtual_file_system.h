@@ -49,8 +49,6 @@ class VirtualFileSystem {
 
   static X_STATUS ExtractContentFiles(Device* device,
                                       std::filesystem::path base_path);
-  static void ExtractContentHeader(Device* device,
-                                   std::filesystem::path base_path);
 
  private:
   xe::global_critical_region global_critical_region_;

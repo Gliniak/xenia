@@ -37,8 +37,8 @@ int vfs_dump_main(const std::vector<std::string>& args) {
   }
 
   std::filesystem::path base_path = cvars::dump_path;
-  std::unique_ptr<vfs::Device> device =
-      vfs::XContentContainerDevice::CreateContentDevice("", cvars::source);
+  std::unique_ptr<vfs::Device> device = nullptr;
+      //vfs::XContentContainerDevice::CreateContentDevice("", cvars::source);
 
   if (!device->Initialize()) {
     XELOGE("Failed to initialize device");

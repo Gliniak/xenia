@@ -16,10 +16,8 @@ namespace xe {
 namespace vfs {
 
 XContentContainerEntry::XContentContainerEntry(Device* device, Entry* parent,
-                                               const std::string_view path,
-                                               MultiFileHandles* files)
+                                               const std::string_view path)
     : Entry(device, parent, path),
-      files_(files),
       data_offset_(0),
       data_size_(0),
       block_(0) {}
@@ -27,19 +25,13 @@ XContentContainerEntry::XContentContainerEntry(Device* device, Entry* parent,
 XContentContainerEntry::~XContentContainerEntry() = default;
 
 std::unique_ptr<XContentContainerEntry> XContentContainerEntry::Create(
-    Device* device, Entry* parent, const std::string_view name,
-    MultiFileHandles* files) {
-  auto path = xe::utf8::join_guest_paths(parent->path(), name);
-  auto entry =
-      std::make_unique<XContentContainerEntry>(device, parent, path, files);
-
-  return std::move(entry);
+    Device* device, Entry* parent, const std::string_view name) {
+  return nullptr;
 }
 
 X_STATUS XContentContainerEntry::Open(uint32_t desired_access,
                                       File** out_file) {
-  *out_file = new XContentContainerFile(desired_access, this);
-  return X_STATUS_SUCCESS;
+  return X_ERROR_FUNCTION_FAILED;
 }
 
 }  // namespace vfs

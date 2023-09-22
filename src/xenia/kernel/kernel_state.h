@@ -156,6 +156,7 @@ class KernelState {
   cpu::Processor* processor() const { return processor_; }
   vfs::VirtualFileSystem* file_system() const { return file_system_; }
 
+
   uint32_t title_id() const;
   util::XdbfGameData title_xdbf() const;
   util::XdbfGameData module_xdbf(object_ref<UserModule> exec_module) const;

@@ -402,29 +402,5 @@ X_STATUS VirtualFileSystem::ExtractContentFiles(
   return X_STATUS_SUCCESS;
 }
 
-void VirtualFileSystem::ExtractContentHeader(Device* device,
-                                             std::filesystem::path base_path) {
-  const XContentContainerDevice* xcontent_device =
-      ((XContentContainerDevice*)device);
-
-  if (!std::filesystem::exists(base_path.parent_path())) {
-    if (!std::filesystem::create_directories(base_path.parent_path())) {
-      return;
-    }
-  }
-  auto header_filename = base_path.filename().string() + ".header";
-  auto header_path = base_path.parent_path() / header_filename;
-  xe::filesystem::CreateEmptyFile(header_path);
-
-  if (std::filesystem::exists(header_path)) {
-    auto file = xe::filesystem::OpenFile(header_path, "wb");
-    kernel::xam::XCONTENT_AGGREGATE_DATA data =
-        xcontent_device->content_header();
-    data.set_file_name(base_path.filename().string());
-    fwrite(&data, 1, sizeof(kernel::xam::XCONTENT_AGGREGATE_DATA), file);
-    fclose(file);
-  }
-  return;
-}
 }  // namespace vfs
 }  // namespace xe

@@ -322,7 +322,15 @@ std::string Emulator::CanonicalizeFileExtension(
 const std::unique_ptr<vfs::Device> Emulator::CreateVfsDeviceBasedOnPath(
     const std::filesystem::path& path, const std::string_view mount_path) {
   if (!path.has_extension()) {
-    return vfs::XContentContainerDevice::CreateContentDevice(mount_path, path);
+    X_RESULT status = X_ERROR_SUCCESS;
+    auto device = kernel_state()->content_manager()->MountPackage(
+        path, status, mount_path);
+
+    if (status != X_ERROR_SUCCESS) {
+      XELOGE("FAILED!");
+      return nullptr;
+    }
+    return device;
   }
   auto extension = CanonicalizeFileExtension(path);
   if (extension == ".xex" || extension == ".elf" || extension == ".exe") {
@@ -416,7 +424,7 @@ X_STATUS Emulator::LaunchPath(const std::filesystem::path& path) {
   if (!path.has_extension()) {
     // Likely an STFS container.
     MountPath(path, "\\Device\\Cdrom0");
-    return LaunchStfsContainer(path);
+    return LaunchXContentContainer(path);
   };
   auto extension = xe::utf8::lower_ascii(xe::path_to_utf8(path.extension()));
   if (extension == ".xex" || extension == ".elf" || extension == ".exe") {
@@ -471,7 +479,7 @@ X_STATUS Emulator::LaunchDiscArchive(const std::filesystem::path& path) {
   return result;
 }
 
-X_STATUS Emulator::LaunchStfsContainer(const std::filesystem::path& path) {
+X_STATUS Emulator::LaunchXContentContainer(const std::filesystem::path& path) {
   std::string module_path = FindLaunchModule();
   X_STATUS result = CompleteLaunch(path, module_path);
 
@@ -490,39 +498,13 @@ X_STATUS Emulator::LaunchDefaultModule(const std::filesystem::path& path) {
 }
 
 X_STATUS Emulator::InstallContentPackage(const std::filesystem::path& path) {
-  std::unique_ptr<vfs::Device> device =
-      vfs::XContentContainerDevice::CreateContentDevice("", path);
+  std::unique_ptr<vfs::Device> device = nullptr;
   if (!device->Initialize()) {
     XELOGE("Failed to initialize device");
     return X_STATUS_INVALID_PARAMETER;
   }
-
-  const vfs::XContentContainerDevice* dev =
-      (vfs::XContentContainerDevice*)device.get();
-
-  std::filesystem::path installation_path =
-      content_root() / fmt::format("{:08X}", dev->title_id()) /
-      fmt::format("{:08X}", dev->content_type()) / path.filename();
-
-  std::filesystem::path header_path =
-      content_root() / fmt::format("{:08X}", dev->title_id()) / "Headers" /
-      fmt::format("{:08X}", dev->content_type()) / path.filename();
-
-  if (std::filesystem::exists(installation_path)) {
-    // TODO(Gliniak): Popup
-    // Do you want to overwrite already existing data?
-  } else {
-    std::error_code error_code;
-    std::filesystem::create_directories(installation_path, error_code);
-    if (error_code) {
-      return error_code.value();
-    }
-  }
-
-  vfs::VirtualFileSystem::ExtractContentHeader(device.get(), header_path);
-
-  return vfs::VirtualFileSystem::ExtractContentFiles(device.get(),
-                                                     installation_path);
+  // TODO: WRITE CODE
+  return X_STATUS_SUCCESS;
 }
 
 void Emulator::Pause() {

@@ -13,62 +13,30 @@
 #include "xenia/base/logging.h"
 #include "xenia/vfs/devices/xcontent_container_device.h"
 #include "xenia/vfs/devices/xcontent_container_entry.h"
-#include "xenia/vfs/devices/xcontent_devices/svod_container_device.h"
+#include "xenia/vfs/devices/xcontent_devices/svod/svod_container_device.h"
+#include "xenia/vfs/devices/xcontent_devices/svod/svod_container_entry.h"
 
 namespace xe {
 namespace vfs {
 
 SvodContainerDevice::SvodContainerDevice(const std::string_view mount_path,
-                                         const std::filesystem::path& host_path)
-    : XContentContainerDevice(mount_path, host_path),
+                                         const std::filesystem::path& host_path,
+                                         const std::map<size_t, FILE*> data_files,
+                                         VolumeDescriptor* volume_descriptor)
+    : XContentContainerDevice(mount_path, host_path, volume_descriptor),
       svod_base_offset_(),
-      svod_layout_() {
+      svod_layout_(),
+      files_(data_files), 
+      files_total_size_(0) {
   SetName("FATX");
+
+  for (auto file : files_) {
+     xe::filesystem::Seek(file.second, 0L, SEEK_END);
+     files_total_size_ += xe::filesystem::Tell(file.second);
+  }
 }
 
 SvodContainerDevice::~SvodContainerDevice() { CloseFiles(); }
-
-SvodContainerDevice::Result SvodContainerDevice::LoadHostFiles(
-    FILE* header_file) {
-  std::filesystem::path data_fragment_path = host_path_;
-  data_fragment_path += ".data";
-  if (!std::filesystem::exists(data_fragment_path)) {
-    XELOGE("STFS container is multi-file, but path {} does not exist.",
-           xe::path_to_utf8(data_fragment_path));
-    return Result::kFileMismatch;
-  }
-
-  // Ensure data fragment files are sorted
-  auto fragment_files = filesystem::ListFiles(data_fragment_path);
-  std::sort(fragment_files.begin(), fragment_files.end(),
-            [](filesystem::FileInfo& left, filesystem::FileInfo& right) {
-              return left.name < right.name;
-            });
-
-  if (fragment_files.size() != header_->content_metadata.data_file_count) {
-    XELOGE("SVOD expecting {} data fragments, but {} are present.",
-           header_->content_metadata.data_file_count, fragment_files.size());
-    return Result::kFileMismatch;
-  }
-
-  for (size_t i = 0; i < fragment_files.size(); i++) {
-    auto& fragment = fragment_files.at(i);
-    auto path = fragment.path / fragment.name;
-    auto file = xe::filesystem::OpenFile(path, "rb");
-    if (!file) {
-      XELOGI("Failed to map SVOD file {}.", xe::path_to_utf8(path));
-      CloseFiles();
-      return Result::kReadError;
-    }
-
-    xe::filesystem::Seek(file, 0L, SEEK_END);
-    files_total_size_ += xe::filesystem::Tell(file);
-    // no need to seek back, any reads from this file will seek first anyway
-    files_.emplace(std::make_pair(i, file));
-  }
-  XELOGI("SVOD successfully mapped {} files.", fragment_files.size());
-  return Result::kSuccess;
-}
 
 XContentContainerDevice::Result SvodContainerDevice::Read() {
   // SVOD Systems can have different layouts. The root block is
@@ -99,12 +67,12 @@ XContentContainerDevice::Result SvodContainerDevice::Read() {
   const uint64_t root_creation_timestamp =
       decode_fat_timestamp(root_data.creation_date, root_data.creation_time);
 
-  auto root_entry = new XContentContainerEntry(this, nullptr, "", &files_);
+  auto root_entry = new SvodContainerEntry(this, nullptr, "", &files_);
   root_entry->attributes_ = kFileAttributeDirectory;
   root_entry->access_timestamp_ = root_creation_timestamp;
   root_entry->create_timestamp_ = root_creation_timestamp;
   root_entry->write_timestamp_ = root_creation_timestamp;
-  root_entry_ = std::unique_ptr<Entry>(root_entry);
+  root_entry_ = std::unique_ptr<SvodContainerEntry>(root_entry);
 
   // Traverse all child entries
   return ReadEntry(root_data.block, 0, root_entry);
@@ -171,7 +139,7 @@ SvodContainerDevice::Result SvodContainerDevice::ReadEntry(
   // NOTE: SVOD entries don't have timestamps for individual files, which can
   //       cause issues when decrypting games. Using the root entry's timestamp
   //       solves this issues.
-  auto entry = XContentContainerEntry::Create(this, parent, name, &files_);
+  auto entry = SvodContainerEntry::Create(this, parent, name, &files_);
   if (dir_entry.attributes & kFileAttributeDirectory) {
     // Entry is a directory
     entry->attributes_ = kFileAttributeDirectory | kFileAttributeReadOnly;
@@ -340,7 +308,7 @@ XContentContainerDevice::Result SvodContainerDevice::SetNormalLayout(
   magic_offset = 0xD000;
 
   // Check for single file system
-  if (header_->content_metadata.data_file_count == 1) {
+  if (0 == 1) {
     svod_layout_ = SvodLayoutType::kSingleFile;
     XELOGI("SVOD is a single file. Magic block present at 0xD000.");
   } else {
@@ -373,8 +341,7 @@ void SvodContainerDevice::BlockToOffset(size_t block, size_t* out_address,
   const size_t HASHES_PER_L1_HASH = 0xA1C4;
   const size_t BLOCKS_PER_FILE = 0x14388;
   const size_t MAX_FILE_SIZE = 0xA290000;
-  const size_t BLOCK_OFFSET =
-      header_->content_metadata.volume_descriptor.svod.start_data_block();
+  const size_t BLOCK_OFFSET = volume_descriptor_->svod.start_data_block();
 
   // Resolve the true block address and file index
   size_t true_block = block - (BLOCK_OFFSET * 2);

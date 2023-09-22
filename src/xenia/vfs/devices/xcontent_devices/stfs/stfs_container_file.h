@@ -7,34 +7,30 @@
  ******************************************************************************
  */
 
-#ifndef XENIA_VFS_DEVICES_XCONTENT_CONTAINER_FILE_H_
-#define XENIA_VFS_DEVICES_XCONTENT_CONTAINER_FILE_H_
+#ifndef XENIA_VFS_DEVICES_XCONTENT_DEVICES_STFS_CONTAINER_FILE_H_
+#define XENIA_VFS_DEVICES_XCONTENT_DEVICES_STFS_CONTAINER_FILE_H_
 
 #include "xenia/vfs/file.h"
+#include "xenia/vfs/devices/xcontent_container_file.h"
 
 #include "xenia/xbox.h"
 
 namespace xe {
 namespace vfs {
 
-class XContentContainerEntry;
+//class XContentContainerEntry;
 
-class XContentContainerFile : public File {
+class StfsContainerFile : public XContentContainerFile {
  public:
-  XContentContainerFile(uint32_t file_access, XContentContainerEntry* entry);
-  ~XContentContainerFile() override;
+  StfsContainerFile(uint32_t file_access, XContentContainerEntry* entry);
+  ~StfsContainerFile() override;
 
   void Destroy() override;
-
-  virtual X_STATUS ReadSync(void* buffer, size_t buffer_length,
-                            size_t byte_offset,
-                            size_t* out_bytes_read) override;
-
+  X_STATUS ReadSync(void* buffer, size_t buffer_length, size_t byte_offset,
+                    size_t* out_bytes_read) override;
   X_STATUS WriteSync(const void* buffer, size_t buffer_length,
-                     size_t byte_offset, size_t* out_bytes_written) override {
-    return X_STATUS_ACCESS_DENIED;
-  }
-  X_STATUS SetLength(size_t length) override { return X_STATUS_ACCESS_DENIED; }
+                     size_t byte_offset, size_t* out_bytes_written) override;
+  X_STATUS SetLength(size_t length) override;
 
  private:
   XContentContainerEntry* entry_;
@@ -43,4 +39,4 @@ class XContentContainerFile : public File {
 }  // namespace vfs
 }  // namespace xe
 
-#endif  // XENIA_VFS_DEVICES_XCONTENT_CONTAINER_FILE_H_
+#endif  // XENIA_VFS_DEVICES_XCONTENT_DEVICES_STFS_CONTAINER_FILE_H_

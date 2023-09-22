@@ -26,19 +26,17 @@ class XContentContainerDevice;
 class XContentContainerEntry : public Entry {
  public:
   XContentContainerEntry(Device* device, Entry* parent,
-                         const std::string_view path, MultiFileHandles* files);
+                         const std::string_view path);
   ~XContentContainerEntry() override;
 
-  static std::unique_ptr<XContentContainerEntry> Create(
-      Device* device, Entry* parent, const std::string_view name,
-      MultiFileHandles* files);
+  virtual std::unique_ptr<XContentContainerEntry> Create(
+      Device* device, Entry* parent, const std::string_view name);
 
-  MultiFileHandles* files() const { return files_; }
   size_t data_offset() const { return data_offset_; }
   size_t data_size() const { return data_size_; }
   size_t block() const { return block_; }
 
-  X_STATUS Open(uint32_t desired_access, File** out_file) override;
+  virtual X_STATUS Open(uint32_t desired_access, File** out_file);
 
   struct BlockRecord {
     size_t file;
@@ -47,15 +45,17 @@ class XContentContainerEntry : public Entry {
   };
   const std::vector<BlockRecord>& block_list() const { return block_list_; }
 
+protected:
+  std::vector<BlockRecord> block_list_;
+
  private:
   friend class StfsContainerDevice;
   friend class SvodContainerDevice;
 
-  MultiFileHandles* files_;
   size_t data_offset_;
   size_t data_size_;
   size_t block_;
-  std::vector<BlockRecord> block_list_;
+
 };
 
 }  // namespace vfs

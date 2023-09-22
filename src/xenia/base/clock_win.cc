@@ -44,6 +44,20 @@ uint64_t Clock::QueryHostSystemTime() {
 }
 
 #endif
+
+uint64_t Clock::QueryHostStfsTime() {
+  SYSTEMTIME st;
+  GetSystemTime(&st);
+  // STFS accuracy is 2 seconds.
+  st.wSecond -= st.wSecond % 2;
+  // Remove unnecessary part.
+  st.wMilliseconds = 0;
+
+  FILETIME ft;
+  SystemTimeToFileTime(&st, &ft);
+  return (uint64_t(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+}
+
 uint64_t Clock::QueryHostUptimeMillis() {
   return host_tick_count_platform() * 1000 / host_tick_frequency_platform();
 }

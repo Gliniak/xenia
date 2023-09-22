@@ -135,46 +135,9 @@ UserProfile::Setting* UserProfile::GetSetting(uint32_t setting_id) {
 }
 
 void UserProfile::LoadSetting(UserProfile::Setting* setting) {
-  if (setting->is_title_specific()) {
-    auto content_dir =
-        kernel_state()->content_manager()->ResolveGameUserContentPath();
-    auto setting_id = fmt::format("{:08X}", setting->setting_id);
-    auto file_path = content_dir / setting_id;
-    auto file = xe::filesystem::OpenFile(file_path, "rb");
-    if (file) {
-      fseek(file, 0, SEEK_END);
-      uint32_t input_file_size = static_cast<uint32_t>(ftell(file));
-      fseek(file, 0, SEEK_SET);
-
-      std::vector<uint8_t> serialized_data(input_file_size);
-      fread(serialized_data.data(), 1, serialized_data.size(), file);
-      fclose(file);
-      setting->Deserialize(serialized_data);
-      setting->loaded_title_id = kernel_state()->title_id();
-    }
-  } else {
-    // Unsupported for now.  Other settings aren't per-game and need to be
-    // stored some other way.
-    XELOGW("Attempting to load unsupported profile setting from disk");
-  }
 }
 
 void UserProfile::SaveSetting(UserProfile::Setting* setting) {
-  if (setting->is_title_specific()) {
-    auto serialized_setting = setting->Serialize();
-    auto content_dir =
-        kernel_state()->content_manager()->ResolveGameUserContentPath();
-    std::filesystem::create_directories(content_dir);
-    auto setting_id = fmt::format("{:08X}", setting->setting_id);
-    auto file_path = content_dir / setting_id;
-    auto file = xe::filesystem::OpenFile(file_path, "wb");
-    fwrite(serialized_setting.data(), 1, serialized_setting.size(), file);
-    fclose(file);
-  } else {
-    // Unsupported for now.  Other settings aren't per-game and need to be
-    // stored some other way.
-    XELOGW("Attempting to save unsupported profile setting to disk");
-  }
 }
 
 }  // namespace xam

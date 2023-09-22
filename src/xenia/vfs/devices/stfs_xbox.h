@@ -44,6 +44,25 @@ inline uint64_t decode_fat_timestamp(const uint32_t date, const uint32_t time) {
   return (timet + 11644473600LL) * 10000000;
 }
 
+static std::tuple<uint16_t, uint16_t> encode_fat_timestamp(uint64_t timestamp) {
+  time_t time_ = (timestamp / 10000000) - 11644473600LL;
+  // Workaround for unset timestamps
+  if (!timestamp) {
+    time_ = 0;
+  }
+  auto* tm = gmtime(&time_);
+
+  uint16_t date = ((tm->tm_year - 80) << 9);
+  date |= ((tm->tm_mon + 1) << 5);
+  date |= (tm->tm_mday << 0);
+
+  uint16_t time = (tm->tm_hour << 11);
+  time |= (tm->tm_min << 5);
+  time |= (tm->tm_sec >> 1);
+
+  return std::make_tuple(date, time);
+}
+
 // Structs used for interchange between Xenia and actual Xbox360 kernel/XAM
 
 inline uint32_t load_uint24_be(const uint8_t* p) {
@@ -58,18 +77,12 @@ inline void store_uint24_le(uint8_t* p, uint32_t value) {
   p[0] = uint8_t(value & 0xFF);
 }
 
-enum class XContentPackageType : uint32_t {
-  kCon = 0x434F4E20,
-  kPirs = 0x50495253,
-  kLive = 0x4C495645,
-};
-
-enum class XContentVolumeType : uint32_t {
-  kStfs = 0,
-  kSvod = 1,
-};
-
 /* STFS structures */
+static constexpr uint8_t kBlocksHashLevelAmount = 3;
+static constexpr uint32_t kBlocksPerHashLevel[kBlocksHashLevelAmount] = {
+    170, 28900, 4913000};
+static constexpr uint32_t kEndOfChain = 0x00FFFFFF;
+
 #pragma pack(push, 1)
 struct StfsVolumeDescriptor {
   uint8_t descriptor_length;
@@ -104,14 +117,24 @@ struct StfsVolumeDescriptor {
   bool is_valid() const {
     return descriptor_length == sizeof(StfsVolumeDescriptor);
   }
+
+  void set_defaults() {
+    descriptor_length = sizeof(StfsVolumeDescriptor);
+    version = 0;
+    flags.as_byte = 0;
+    file_table_block_count = 0;
+    set_file_table_block_number(0);
+    memset(top_hash_table_hash, 0, 0x14);
+    total_block_count = free_block_count = 0;
+  }
 };
 static_assert_size(StfsVolumeDescriptor, 0x24);
 #pragma pack(pop)
 
 enum class StfsHashState : uint8_t {
-  kFree = 0,   // unallocated but doesn't exist in package (needs to expand)?
-  kFree2 = 1,  // unallocated but exists in package?
-  kInUse = 2,
+  kUnallocated = 0,   // unallocated but doesn't exist in package (needs to expand)?
+  kFree = 1,  // unallocated but exists in package?
+  kUsed = 2,
 };
 
 struct StfsHashEntry {
@@ -156,7 +179,7 @@ struct StfsHashEntry {
 static_assert_size(StfsHashEntry, 0x18);
 
 struct StfsHashTable {
-  StfsHashEntry entries[170];
+  StfsHashEntry entries[kBlocksPerHashLevel[0]];
   xe::be<uint32_t> num_blocks;  // num L0 blocks covered by this table?
   uint8_t padding[12];
 };
@@ -216,7 +239,7 @@ struct StfsDirectoryBlock {
 static_assert_size(StfsDirectoryBlock, 0x1000);
 
 /* SVOD structures */
-struct SvodDeviceDescriptor {
+struct SvodVolumeDescriptor {
   uint8_t descriptor_length;
   uint8_t block_cache_element_count;
   uint8_t worker_thread_processor;
@@ -238,266 +261,14 @@ struct SvodDeviceDescriptor {
 
   uint32_t start_data_block() { return load_uint24_le(start_data_block_raw); }
 };
-static_assert_size(SvodDeviceDescriptor, 0x24);
+static_assert_size(SvodVolumeDescriptor, 0x24);
 
-/* XContent structures */
-struct XContentLicense {
-  be<uint64_t> licensee_id;
-  be<uint32_t> license_bits;
-  be<uint32_t> license_flags;
-};
-static_assert_size(XContentLicense, 0x10);
-
-struct XContentMediaData {
-  uint8_t series_id[0x10];
-  uint8_t season_id[0x10];
-  be<uint16_t> season_number;
-  be<uint16_t> episode_number;
-};
-static_assert_size(XContentMediaData, 0x24);
-
-struct XContentAvatarAssetData {
-  be<uint32_t> sub_category;
-  be<uint32_t> colorizable;
-  uint8_t asset_id[0x10];
-  uint8_t skeleton_version_mask;
-  uint8_t reserved[0xB];
-};
-static_assert_size(XContentAvatarAssetData, 0x24);
-
-struct XContentAttributes {
-  uint8_t profile_transfer : 1;
-  uint8_t device_transfer : 1;
-  uint8_t move_only_transfer : 1;
-  uint8_t kinect_enabled : 1;
-  uint8_t disable_network_storage : 1;
-  uint8_t deep_link_supported : 1;
-  uint8_t reserved : 2;
-};
-static_assert_size(XContentAttributes, 1);
-
-#pragma pack(push, 1)
-struct XContentMetadata {
-  static const uint32_t kThumbLengthV1 = 0x4000;
-  static const uint32_t kThumbLengthV2 = 0x3D00;
-
-  static const uint32_t kNumLanguagesV1 = 9;
-  // metadata_version 2 adds 3 languages inside thumbnail/title_thumbnail space
-  static const uint32_t kNumLanguagesV2 = 12;
-
-  be<XContentType> content_type;
-  be<uint32_t> metadata_version;
-  be<uint64_t> content_size;
-  xex2_opt_execution_info execution_info;
-  uint8_t console_id[5];
-  be<uint64_t> profile_id;
+struct VolumeDescriptor {
   union {
     StfsVolumeDescriptor stfs;
-    SvodDeviceDescriptor svod;
-  } volume_descriptor;
-  be<uint32_t> data_file_count;
-  be<uint64_t> data_file_size;
-  be<XContentVolumeType> volume_type;
-  be<uint64_t> online_creator;
-  be<uint32_t> category;
-  uint8_t reserved2[0x20];
-  union {
-    XContentMediaData media_data;
-    XContentAvatarAssetData avatar_asset_data;
-  } metadata_v2;
-  uint8_t device_id[0x14];
-  union {
-    be<uint16_t> uint[kNumLanguagesV1][128];
-    char16_t chars[kNumLanguagesV1][128];
-  } display_name_raw;
-  union {
-    be<uint16_t> uint[kNumLanguagesV1][128];
-    char16_t chars[kNumLanguagesV1][128];
-  } description_raw;
-  union {
-    be<uint16_t> uint[64];
-    char16_t chars[64];
-  } publisher_raw;
-  union {
-    be<uint16_t> uint[64];
-    char16_t chars[64];
-  } title_name_raw;
-  union {
-    uint8_t as_byte;
-    XContentAttributes bits;
-  } flags;
-  be<uint32_t> thumbnail_size;
-  be<uint32_t> title_thumbnail_size;
-  uint8_t thumbnail[kThumbLengthV2];
-  union {
-    be<uint16_t> uint[kNumLanguagesV2 - kNumLanguagesV1][128];
-    char16_t chars[kNumLanguagesV2 - kNumLanguagesV1][128];
-  } display_name_ex_raw;
-  uint8_t title_thumbnail[kThumbLengthV2];
-  union {
-    be<uint16_t> uint[kNumLanguagesV2 - kNumLanguagesV1][128];
-    char16_t chars[kNumLanguagesV2 - kNumLanguagesV1][128];
-  } description_ex_raw;
-
-  std::u16string display_name(XLanguage language) const {
-    uint32_t lang_id = uint32_t(language) - 1;
-
-    if (lang_id >= kNumLanguagesV2) {
-      assert_always();
-      // no room for this lang, read from english slot..
-      lang_id = uint32_t(XLanguage::kEnglish) - 1;
-    }
-
-    const be<uint16_t>* str = 0;
-    if (lang_id >= 0 && lang_id < kNumLanguagesV1) {
-      str = display_name_raw.uint[lang_id];
-    } else if (lang_id >= kNumLanguagesV1 && lang_id < kNumLanguagesV2 &&
-               metadata_version >= 2) {
-      str = display_name_ex_raw.uint[lang_id - kNumLanguagesV1];
-    }
-
-    if (!str) {
-      // Invalid language ID?
-      assert_always();
-      return u"";
-    }
-
-    return load_and_swap<std::u16string>(str);
-  }
-
-  std::u16string description(XLanguage language) const {
-    uint32_t lang_id = uint32_t(language) - 1;
-
-    if (lang_id >= kNumLanguagesV2) {
-      assert_always();
-      // no room for this lang, read from english slot..
-      lang_id = uint32_t(XLanguage::kEnglish) - 1;
-    }
-
-    const be<uint16_t>* str = 0;
-    if (lang_id >= 0 && lang_id < kNumLanguagesV1) {
-      str = description_raw.uint[lang_id];
-    } else if (lang_id >= kNumLanguagesV1 && lang_id < kNumLanguagesV2 &&
-               metadata_version >= 2) {
-      str = description_ex_raw.uint[lang_id - kNumLanguagesV1];
-    }
-
-    if (!str) {
-      // Invalid language ID?
-      assert_always();
-      return u"";
-    }
-
-    return load_and_swap<std::u16string>(str);
-  }
-
-  std::u16string publisher() const {
-    return load_and_swap<std::u16string>(publisher_raw.uint);
-  }
-
-  std::u16string title_name() const {
-    return load_and_swap<std::u16string>(title_name_raw.uint);
-  }
-
-  bool set_display_name(XLanguage language, const std::u16string_view value) {
-    uint32_t lang_id = uint32_t(language) - 1;
-
-    if (lang_id >= kNumLanguagesV2) {
-      assert_always();
-      // no room for this lang, store in english slot..
-      lang_id = uint32_t(XLanguage::kEnglish) - 1;
-    }
-
-    char16_t* str = 0;
-    if (lang_id >= 0 && lang_id < kNumLanguagesV1) {
-      str = display_name_raw.chars[lang_id];
-    } else if (lang_id >= kNumLanguagesV1 && lang_id < kNumLanguagesV2 &&
-               metadata_version >= 2) {
-      str = display_name_ex_raw.chars[lang_id - kNumLanguagesV1];
-    }
-
-    if (!str) {
-      // Invalid language ID?
-      assert_always();
-      return false;
-    }
-
-    string_util::copy_and_swap_truncating(str, value,
-                                          countof(display_name_raw.chars[0]));
-    return true;
-  }
-
-  bool set_description(XLanguage language, const std::u16string_view value) {
-    uint32_t lang_id = uint32_t(language) - 1;
-
-    if (lang_id >= kNumLanguagesV2) {
-      assert_always();
-      // no room for this lang, store in english slot..
-      lang_id = uint32_t(XLanguage::kEnglish) - 1;
-    }
-
-    char16_t* str = 0;
-    if (lang_id >= 0 && lang_id < kNumLanguagesV1) {
-      str = description_raw.chars[lang_id];
-    } else if (lang_id >= kNumLanguagesV1 && lang_id < kNumLanguagesV2 &&
-               metadata_version >= 2) {
-      str = description_ex_raw.chars[lang_id - kNumLanguagesV1];
-    }
-
-    if (!str) {
-      // Invalid language ID?
-      assert_always();
-      return false;
-    }
-
-    string_util::copy_and_swap_truncating(str, value,
-                                          countof(description_raw.chars[0]));
-    return true;
-  }
-
-  void set_publisher(const std::u16string_view value) {
-    string_util::copy_and_swap_truncating(publisher_raw.chars, value,
-                                          countof(publisher_raw.chars));
-  }
-
-  void set_title_name(const std::u16string_view value) {
-    string_util::copy_and_swap_truncating(title_name_raw.chars, value,
-                                          countof(title_name_raw.chars));
-  }
+    SvodVolumeDescriptor svod;
+  };
 };
-static_assert_size(XContentMetadata, 0x93D6);
-
-struct XContentHeader {
-  be<XContentPackageType> magic;
-  uint8_t signature[0x228];
-  XContentLicense licenses[0x10];
-  uint8_t content_id[0x14];
-  be<uint32_t> header_size;
-
-  bool is_magic_valid() const {
-    return magic == XContentPackageType::kCon ||
-           magic == XContentPackageType::kLive ||
-           magic == XContentPackageType::kPirs;
-  }
-};
-static_assert_size(XContentHeader, 0x344);
-#pragma pack(pop)
-
-struct XContentContainerHeader {
-  XContentHeader content_header;
-  XContentMetadata content_metadata;
-  // TODO: title/system updates contain more data after XContentMetadata, seems
-  // to affect header.header_size
-
-  bool is_package_readonly() const {
-    if (content_metadata.volume_type == vfs::XContentVolumeType::kSvod) {
-      return true;
-    }
-
-    return content_metadata.volume_descriptor.stfs.flags.bits.read_only_format;
-  }
-};
-static_assert_size(XContentContainerHeader, 0x971A);
 
 }  // namespace vfs
 }  // namespace xe

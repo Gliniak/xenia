@@ -74,6 +74,29 @@ struct FileAccess {
   static const uint32_t kFileAppendData = 0x00000004;
 };
 
+class File {
+ public:
+  static std::unique_ptr<File> Open(const std::filesystem::path& path,
+                                          const std::string_view mode,
+                                          const uint32_t start_offset);
+
+  int64_t GetSize() { return std::filesystem::file_size(path_) - start_offset_; }
+
+  bool Resize(int64_t new_size);
+  bool Seek(int64_t offset, int origin);
+  size_t Read(void* buffer, size_t element_size, size_t element_count);
+  size_t Write(void* buffer, size_t element_size, size_t element_count);
+
+  void Close();
+
+  private:
+    FILE* file_;
+
+    std::filesystem::path path_;
+    size_t total_size_;
+    size_t start_offset_;
+};
+
 class FileHandle {
  public:
   // Opens the file, failing if it doesn't exist.

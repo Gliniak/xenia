@@ -200,7 +200,7 @@ class Emulator {
   X_STATUS LaunchDiscArchive(const std::filesystem::path& path);
 
   // Launches a game from an STFS container file.
-  X_STATUS LaunchStfsContainer(const std::filesystem::path& path);
+  X_STATUS LaunchXContentContainer(const std::filesystem::path& path);
 
   X_STATUS LaunchDefaultModule(const std::filesystem::path& path);
 
