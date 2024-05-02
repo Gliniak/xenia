@@ -44,6 +44,9 @@ namespace hid {
 class InputDriver;
 class InputSystem;
 }  // namespace hid
+namespace net {
+class NetworkSystem;
+}  // namespace net
 namespace ui {
 class ImGuiDrawer;
 class Window;
@@ -177,7 +180,9 @@ class Emulator {
       std::function<std::unique_ptr<gpu::GraphicsSystem>()>
           graphics_system_factory,
       std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
-          input_driver_factory);
+          input_driver_factory,
+      std::function<std::unique_ptr<net::NetworkSystem>()>
+          network_system_factory);
 
   // Terminates the currently running title.
   X_STATUS TerminateTitle();
@@ -296,6 +301,7 @@ class Emulator {
   std::unique_ptr<apu::AudioSystem> audio_system_;
   std::unique_ptr<gpu::GraphicsSystem> graphics_system_;
   std::unique_ptr<hid::InputSystem> input_system_;
+  std::unique_ptr<net::NetworkSystem> network_system_;
 
   std::unique_ptr<cpu::ExportResolver> export_resolver_;
   std::unique_ptr<vfs::VirtualFileSystem> file_system_;

@@ -48,6 +48,7 @@
 #include "xenia/kernel/xbdm/xbdm_module.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
 #include "xenia/memory.h"
+#include "xenia/net/network_system.h"
 #include "xenia/ui/file_picker.h"
 #include "xenia/ui/imgui_dialog.h"
 #include "xenia/ui/imgui_drawer.h"
@@ -182,7 +183,9 @@ X_STATUS Emulator::Setup(
     std::function<std::unique_ptr<gpu::GraphicsSystem>()>
         graphics_system_factory,
     std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
-        input_driver_factory) {
+        input_driver_factory,
+    std::function<std::unique_ptr<net::NetworkSystem>()>
+        network_system_factory) {
   X_STATUS result = X_STATUS_UNSUCCESSFUL;
 
   display_window_ = display_window;
@@ -244,6 +247,12 @@ X_STATUS Emulator::Setup(
   // Initialize the GPU.
   graphics_system_ = graphics_system_factory();
   if (!graphics_system_) {
+    return X_STATUS_NOT_IMPLEMENTED;
+  }
+
+  // Initialize the Network.
+  network_system_ = network_system_factory();
+  if (!network_system_) {
     return X_STATUS_NOT_IMPLEMENTED;
   }
 

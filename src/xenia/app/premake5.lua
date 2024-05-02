@@ -16,6 +16,8 @@ project("xenia-app")
     "xenia-gpu-vulkan",
     "xenia-hid",
     "xenia-hid-nop",
+    "xenia-net",
+    "xenia-net-null",
     "xenia-kernel",
     "xenia-patcher",
     "xenia-ui",
@@ -115,6 +117,7 @@ project("xenia-app")
       "xenia-gpu-d3d12",
       "xenia-hid-winkey",
       "xenia-hid-xinput",
+      "xenia-net-winsock",
       "xenia-ui-d3d12",
     })
 

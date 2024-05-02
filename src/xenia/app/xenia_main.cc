@@ -61,6 +61,12 @@
 #include "xenia/hid/xinput/xinput_hid.h"
 #endif  // XE_PLATFORM_WIN32
 
+// Available network backends:
+#include "xenia/net/null/null_network_system.h"
+#if XE_PLATFORM_WIN32
+#include "xenia/net/winsock/winsock_network_system.h"
+#endif
+
 #include "third_party/fmt/include/fmt/format.h"
 
 #include "xenia/kernel/XLiveAPI.h"
@@ -70,6 +76,8 @@ DEFINE_string(gpu, "any", "Graphics system. Use: [any, d3d12, vulkan, null]",
               "GPU");
 DEFINE_string(hid, "any", "Input system. Use: [any, nop, sdl, winkey, xinput]",
               "HID");
+DEFINE_string(net, "any", "Network system. Use: [any, null, winsock]",
+              "NETWORK");
 
 DEFINE_path(
     storage_root, "",
@@ -219,6 +227,7 @@ class EmulatorApp final : public xe::ui::WindowedApp {
   static std::unique_ptr<gpu::GraphicsSystem> CreateGraphicsSystem();
   static std::vector<std::unique_ptr<hid::InputDriver>> CreateInputDrivers(
       ui::Window* window);
+  static std::unique_ptr<net::NetworkSystem> CreateNetworkSystem();
 
   void EmulatorThread();
   void ShutdownEmulatorThreadFromUIThread();
@@ -383,6 +392,15 @@ std::vector<std::unique_ptr<hid::InputDriver>> EmulatorApp::CreateInputDrivers(
   return drivers;
 }
 
+std::unique_ptr<net::NetworkSystem> EmulatorApp::CreateNetworkSystem() {
+  Factory<net::NetworkSystem> factory;
+#if XE_PLATFORM_WIN32
+  factory.Add<net::winsock::WinsockNetworkSystem>("winsock");
+#endif  // XE_PLATFORM_WIN32
+  factory.Add<net::null::NullNetworkSystem>("null");
+  return factory.Create(cvars::net);
+}
+
 bool EmulatorApp::OnInitialize() {
 #if XE_ARCH_AMD64 == 1
   amd64::InitFeatureFlags();
@@ -510,9 +528,10 @@ void EmulatorApp::EmulatorThread() {
 
   // Setup and initialize all subsystems. If we can't do something
   // (unsupported system, memory issues, etc) this will fail early.
-  X_STATUS result = emulator_->Setup(
-      emulator_window_->window(), emulator_window_->imgui_drawer(), true,
-      CreateAudioSystem, CreateGraphicsSystem, CreateInputDrivers);
+  X_STATUS result = emulator_->Setup(emulator_window_->window(),
+                                     emulator_window_->imgui_drawer(), true,
+                                     CreateAudioSystem, CreateGraphicsSystem,
+                                     CreateInputDrivers, CreateNetworkSystem);
   if (XFAILED(result)) {
     XELOGE("Failed to setup emulator: {:08X}", result);
     app_context().RequestDeferredQuit();
