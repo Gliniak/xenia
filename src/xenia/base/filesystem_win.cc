@@ -83,6 +83,13 @@ bool Seek(FILE* file, int64_t offset, int origin) {
 
 int64_t Tell(FILE* file) { return _ftelli64(file); }
 
+int64_t FileSize(FILE* file) {
+  _fseeki64(file, 0, SEEK_END);
+  const int64_t size = Tell(file);
+  rewind(file);
+  return size;
+}
+
 bool TruncateStdioFile(FILE* file, uint64_t length) {
   // Flush is necessary - if not flushing, stream position may be out of sync.
   if (fflush(file)) {

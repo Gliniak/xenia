@@ -22,6 +22,8 @@
 #include "xenia/ui/imgui_dialog.h"
 #include "xenia/ui/imgui_drawer.h"
 #include "xenia/xbox.h"
+#include "xenia/base/literals.h"
+#include "xenia/vfs/devices/xcontent_container_device.h"
 
 DEFINE_int32(
     license_mask, 0,
@@ -36,6 +38,8 @@ DEFINE_int32(
 namespace xe {
 namespace kernel {
 namespace xam {
+
+using namespace xe::literals;
 
 dword_result_t XamContentGetLicenseMask_entry(lpdword_t mask_ptr,
                                               lpunknown_t overlapped_ptr) {
@@ -278,10 +282,60 @@ dword_result_t XamContentOpenFile_entry(dword_t user_index,
                                         lpdword_t disposition_ptr,
                                         lpdword_t license_mask_ptr,
                                         lpvoid_t overlapped_ptr) {
-  // TODO(gibbed): arguments assumed based on XamContentCreate.
-  return X_ERROR_FILE_NOT_FOUND;
+  vfs::File* vfs_file;
+  vfs::FileAction file_action;
+
+  const auto result = kernel_state()->file_system()->OpenFile(
+      nullptr, path.value(), vfs::FileDisposition::kOpen, 1, false, true,
+      &vfs_file, &file_action);
+
+  if (!XSUCCEEDED(result)) {
+    return X_ERROR_FILE_NOT_FOUND;
+  }
+
+  std::FILE* package_file = std::tmpfile();
+
+  if (vfs_file->entry()->can_map()) {
+    auto map = vfs_file->entry()->OpenMapped(xe::MappedMemory::Mode::kRead);
+    fwrite(map->data(), map->size(), 1, package_file);
+    map->Close();
+  } else {
+    size_t buffer_size = 0;
+    uint8_t* buffer = nullptr;
+    // Can't map the file into memory. Read it into a temporary buffer.
+    if (!buffer || vfs_file->entry()->size() > buffer_size) {
+      // Resize the buffer.
+      if (buffer) {
+        delete[] buffer;
+      }
+
+      // Allocate a buffer rounded up to the nearest 512MB.
+      buffer_size = xe::round_up(vfs_file->entry()->size(), 512_MiB);
+      buffer = new uint8_t[buffer_size];
+    }
+
+    size_t bytes_read = 0;
+    vfs_file->ReadSync(buffer, vfs_file->entry()->size(), 0, &bytes_read);
+    fwrite(buffer, bytes_read, 1, package_file);
+
+    delete[] buffer;
+  }
+
+  fseek(package_file, 0, SEEK_SET);
+
+  auto device = vfs::XContentContainerDevice::CreateContentDevice(
+      root_name.value() + ':', package_file);
+  if (!device || !device->Initialize()) {
+    return X_ERROR_FILE_NOT_FOUND;
+  }
+
+  if (!kernel_state()->file_system()->RegisterDevice(std::move(device))) {
+    return X_STATUS_NO_SUCH_FILE;
+  }
+
+  return X_ERROR_SUCCESS;
 }
-DECLARE_XAM_EXPORT1(XamContentOpenFile, kContent, kStub);
+DECLARE_XAM_EXPORT1(XamContentOpenFile, kContent, kImplemented);
 
 dword_result_t XamContentFlush_entry(lpstring_t root_name,
                                      lpunknown_t overlapped_ptr) {

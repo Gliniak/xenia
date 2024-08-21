@@ -29,6 +29,7 @@ class StfsContainerDevice : public XContentContainerDevice {
  public:
   StfsContainerDevice(const std::string_view mount_path,
                       const std::filesystem::path& host_path);
+  StfsContainerDevice(const std::string_view mount_path, FILE* file);
   ~StfsContainerDevice() override;
 
   bool is_read_only() const override {

@@ -35,6 +35,10 @@ class XContentContainerDevice : public Device {
       const std::string_view mount_path,
       const std::filesystem::path& host_path);
 
+  static std::unique_ptr<Device> CreateContentDevice(
+      const std::string_view mount_path,
+      FILE* file);
+
   ~XContentContainerDevice() override;
 
   bool Initialize();
@@ -66,6 +70,8 @@ class XContentContainerDevice : public Device {
  protected:
   XContentContainerDevice(const std::string_view mount_path,
                           const std::filesystem::path& host_path);
+  XContentContainerDevice(const std::string_view mount_path, FILE* file);
+
   enum class Result {
     kSuccess = 0,
     kOutOfMemory = -1,
@@ -101,6 +107,7 @@ class XContentContainerDevice : public Device {
 
   std::string name_;
   std::filesystem::path host_path_;
+  FILE* host_file_;
 
   std::map<size_t, FILE*> files_;
   size_t files_total_size_;

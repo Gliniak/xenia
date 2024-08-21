@@ -57,6 +57,9 @@ bool Seek(FILE* file, int64_t offset, int origin);
 // Wrapper for the 64-bit version of ftell, returns a positive value on success.
 int64_t Tell(FILE* file);
 
+
+int64_t FileSize(FILE* file);
+
 // Reduces the size of a stdio file opened for writing. The file pointer is
 // clamped. If this returns false, the size of the file and the file pointer are
 // undefined.

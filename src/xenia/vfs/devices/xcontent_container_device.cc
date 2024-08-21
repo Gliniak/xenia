@@ -63,44 +63,64 @@ std::unique_ptr<Device> XContentContainerDevice::CreateContentDevice(
   return nullptr;
 }
 
+std::unique_ptr<Device> XContentContainerDevice::CreateContentDevice(
+    const std::string_view mount_path, FILE* file) {
+  const auto header = XContentContainerDevice::ReadContainerHeader(file);
+  if (header == nullptr) {
+    return nullptr;
+  }
+
+  if (!header->content_header.is_magic_valid()) {
+    return nullptr;
+  }
+
+  switch (header->content_metadata.volume_type) {
+    case XContentVolumeType::kStfs:
+      return std::make_unique<StfsContainerDevice>(mount_path, file);
+      break;
+    default:
+      break;
+  }
+
+  return nullptr;
+}
+
 XContentContainerDevice::XContentContainerDevice(
     const std::string_view mount_path, const std::filesystem::path& host_path)
     : Device(mount_path),
       name_("XContent"),
       host_path_(host_path),
+      host_file_(xe::filesystem::OpenFile(host_path, "rb")),
+      files_total_size_(0),
+      header_(std::make_unique<XContentContainerHeader>()) {}
+
+XContentContainerDevice::XContentContainerDevice(
+    const std::string_view mount_path, FILE* file)
+    : Device(mount_path),
+      name_("TempXContent"),
+      host_path_(""),
+      host_file_(file),
       files_total_size_(0),
       header_(std::make_unique<XContentContainerHeader>()) {}
 
 XContentContainerDevice::~XContentContainerDevice() {}
 
 bool XContentContainerDevice::Initialize() {
-  if (!std::filesystem::exists(host_path_)) {
-    XELOGE("Path to XContent container does not exist: {}",
-           xe::path_to_utf8(host_path_));
-    return false;
-  }
-
-  if (std::filesystem::is_directory(host_path_)) {
-    return false;
-  }
-
-  XELOGI("Loading XContent header file: {}", xe::path_to_utf8(host_path_));
-  auto header_file = xe::filesystem::OpenFile(host_path_, "rb");
-  if (!header_file) {
+  if (!host_file_) {
     XELOGE("Error opening XContent header file.");
     return false;
   }
 
-  auto header_loading_result = ReadHeaderAndVerify(header_file);
+  auto header_loading_result = ReadHeaderAndVerify(host_file_);
   if (header_loading_result != Result::kSuccess) {
     XELOGE("Error reading XContent header: {}", header_loading_result);
-    fclose(header_file);
+    fclose(host_file_);
     return false;
   }
 
   SetupContainer();
 
-  if (LoadHostFiles(header_file) != Result::kSuccess) {
+  if (LoadHostFiles(host_file_) != Result::kSuccess) {
     XELOGE("Error loading XContent host files.");
     return false;
   }
@@ -168,7 +188,8 @@ kernel::xam::XCONTENT_AGGREGATE_DATA XContentContainerDevice::content_header()
 
 XContentContainerDevice::Result XContentContainerDevice::ReadHeaderAndVerify(
     FILE* header_file) {
-  files_total_size_ = std::filesystem::file_size(host_path_);
+  
+  files_total_size_ = xe::filesystem::FileSize(header_file);
   if (files_total_size_ < sizeof(XContentContainerHeader)) {
     return Result::kTooSmall;
   }

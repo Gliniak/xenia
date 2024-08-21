@@ -26,6 +26,14 @@ StfsContainerDevice::StfsContainerDevice(const std::string_view mount_path,
   SetName("STFS");
 }
 
+StfsContainerDevice::StfsContainerDevice(const std::string_view mount_path,
+                                         FILE* file)
+    : XContentContainerDevice(mount_path, file),
+      blocks_per_hash_table_(1),
+      block_step_{0, 0} {
+  SetName("STFS");
+}
+
 StfsContainerDevice::~StfsContainerDevice() { CloseFiles(); }
 
 void StfsContainerDevice::SetupContainer() {
