@@ -105,7 +105,7 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
       uint32_t num_users = 0;
 
       for (uint32_t i = 0; i < X_USER_MAX_USERS; i++) {
-        if (kernel_state()->user_profile(i)) {
+        if (kernel_state()->IsUserSignedIn(i)) {
           num_users++;
         }
       }
@@ -551,6 +551,14 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
       XSessionSearchByID* data = reinterpret_cast<XSessionSearchByID*>(buffer);
 
       return XSession::GetSessionByID(memory_, data);
+    }
+    case 0x000B0060: {
+      XELOGI("XSessionSearchByIds");
+
+      XSessionSearchByIDs* data =
+          reinterpret_cast<XSessionSearchByIDs*>(buffer);
+
+      return XSession::GetSessionByIDs(memory_, data);
     }
     case 0x000B0065: {
       XELOGI("XSessionSearchWeighted unimplemented");
