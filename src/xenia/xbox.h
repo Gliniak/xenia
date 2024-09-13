@@ -437,6 +437,39 @@ struct X_KSPINLOCK {
 static_assert_size(X_KSPINLOCK, 4);
 #pragma pack(pop)
 
+typedef struct {
+  uint8_t public_exponent[4];
+  uint8_t modulus[0x80];
+} X_CONSOLE_PUBLIC_KEY;
+static_assert_size(X_CONSOLE_PUBLIC_KEY, 0x84);
+
+enum class XConsoleType : uint32_t {
+  Invalid = 0,
+  Devkit = 1,
+  Retail = 2,
+  Testkit = 0x40000001,
+  RecoveredDevkit = 0x80000001
+};
+
+typedef struct {
+  be<uint16_t> cert_size;
+  uint8_t console_id[5];
+  uint8_t console_partnumber[11];
+  uint8_t reserved[4];
+  be<uint16_t> privileges;
+  be<XConsoleType> console_type;
+  uint8_t manufacture_date[8];
+  X_CONSOLE_PUBLIC_KEY console_publickey;
+  uint8_t signature[0x100];
+} X_XE_CONSOLE_CERTIFICATE;
+static_assert_size(X_XE_CONSOLE_CERTIFICATE, 0x1A8);
+
+typedef struct {
+  X_XE_CONSOLE_CERTIFICATE console_certificate;
+  uint8_t signature[0x80];
+} X_XE_CONSOLE_SIGNATURE;
+static_assert_size(X_XE_CONSOLE_SIGNATURE, 0x228);
+
 // Found by dumping the kSectionStringTable sections of various games:
 // and the language list at
 // https://free60project.github.io/wiki/Profile_Account/

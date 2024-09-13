@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "xenia/base/logging.h"
-#include "xenia/kernel/xam/content_manager.h"
+#include "xenia/kernel/xam/content/content_manager.h"
 #include "xenia/vfs/devices/xcontent_container_entry.h"
 #include "xenia/vfs/devices/xcontent_devices/stfs_container_device.h"
 
@@ -30,7 +30,7 @@ StfsContainerDevice::~StfsContainerDevice() { CloseFiles(); }
 
 void StfsContainerDevice::SetupContainer() {
   // Additional part specific to STFS container.
-  const XContentContainerHeader* header = GetContainerHeader();
+  const kernel::xam::XContentContainerHeader* header = GetContainerHeader();
   blocks_per_hash_table_ = header->is_package_readonly() ? 1 : 2;
 
   block_step_[0] = kBlocksPerHashLevel[0] + blocks_per_hash_table_;
@@ -40,7 +40,7 @@ void StfsContainerDevice::SetupContainer() {
 
 XContentContainerDevice::Result StfsContainerDevice::LoadHostFiles(
     FILE* header_file) {
-  const XContentContainerHeader* header = GetContainerHeader();
+  const kernel::xam::XContentContainerHeader* header = GetContainerHeader();
 
   if (header->content_metadata.data_file_count > 0) {
     XELOGW("STFS container is not a single file. Loading might fail!");
@@ -304,7 +304,7 @@ const StfsHashEntry* StfsContainerDevice::GetBlockHash(uint32_t block_index) {
 
 const uint8_t StfsContainerDevice::GetBlocksPerHashTableFromContainerHeader()
     const {
-  const XContentContainerHeader* header = GetContainerHeader();
+  const kernel::xam::XContentContainerHeader* header = GetContainerHeader();
   if (!header) {
     XELOGE(
         "VFS: SetBlocksPerHashTableBasedOnContainerHeader - Missing "

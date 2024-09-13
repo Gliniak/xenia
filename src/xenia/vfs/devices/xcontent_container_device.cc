@@ -34,7 +34,7 @@ std::unique_ptr<Device> XContentContainerDevice::CreateContentDevice(
   }
 
   const uint64_t package_size = std::filesystem::file_size(host_path);
-  if (package_size < sizeof(XContentContainerHeader)) {
+  if (package_size < sizeof(kernel::xam::XContentContainerHeader)) {
     return nullptr;
   }
 
@@ -50,10 +50,10 @@ std::unique_ptr<Device> XContentContainerDevice::CreateContentDevice(
   }
 
   switch (header->content_metadata.volume_type) {
-    case XContentVolumeType::kStfs:
+    case kernel::xam::XContentVolumeType::kStfs:
       return std::make_unique<StfsContainerDevice>(mount_path, host_path);
       break;
-    case XContentVolumeType::kSvod:
+    case kernel::xam::XContentVolumeType::kSvod:
       return std::make_unique<SvodContainerDevice>(mount_path, host_path);
       break;
     default:
@@ -69,7 +69,7 @@ XContentContainerDevice::XContentContainerDevice(
       name_("XContent"),
       host_path_(host_path),
       files_total_size_(0),
-      header_(std::make_unique<XContentContainerHeader>()) {}
+      header_(std::make_unique<kernel::xam::XContentContainerHeader>()) {}
 
 XContentContainerDevice::~XContentContainerDevice() {}
 
@@ -108,11 +108,13 @@ bool XContentContainerDevice::Initialize() {
   return Read() == Result::kSuccess;
 }
 
-XContentContainerHeader* XContentContainerDevice::ReadContainerHeader(
-    FILE* host_file) {
-  XContentContainerHeader* header = new XContentContainerHeader();
+kernel::xam::XContentContainerHeader*
+XContentContainerDevice::ReadContainerHeader(FILE* host_file) {
+  kernel::xam::XContentContainerHeader* header =
+      new kernel::xam::XContentContainerHeader();
   // Read header & check signature
-  if (fread(header, sizeof(XContentContainerHeader), 1, host_file) != 1) {
+  if (fread(header, sizeof(kernel::xam::XContentContainerHeader), 1,
+            host_file) != 1) {
     return nullptr;
   }
   return header;
@@ -169,16 +171,18 @@ kernel::xam::XCONTENT_AGGREGATE_DATA XContentContainerDevice::content_header()
 XContentContainerDevice::Result XContentContainerDevice::ReadHeaderAndVerify(
     FILE* header_file) {
   files_total_size_ = std::filesystem::file_size(host_path_);
-  if (files_total_size_ < sizeof(XContentContainerHeader)) {
+  if (files_total_size_ < sizeof(kernel::xam::XContentContainerHeader)) {
     return Result::kTooSmall;
   }
 
-  const XContentContainerHeader* header = ReadContainerHeader(header_file);
+  const kernel::xam::XContentContainerHeader* header =
+      ReadContainerHeader(header_file);
   if (header == nullptr) {
     return Result::kReadError;
   }
 
-  std::memcpy(header_.get(), header, sizeof(XContentContainerHeader));
+  std::memcpy(header_.get(), header,
+              sizeof(kernel::xam::XContentContainerHeader));
 
   if (!header_->content_header.is_magic_valid()) {
     // Unexpected format.

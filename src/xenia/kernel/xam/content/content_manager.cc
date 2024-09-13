@@ -7,11 +7,12 @@
  ******************************************************************************
  */
 
-#include "xenia/kernel/xam/content_manager.h"
-
+#include "xenia/kernel/xam/content/content_manager.h"
 #include <array>
 #include <string>
 #include <unordered_set>
+#include "xenia/kernel/xam/content/host_content_package.h"
+#include "xenia/kernel/xam/content/xcontent_package.h"
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/filesystem.h"
@@ -22,38 +23,15 @@
 #include "xenia/kernel/xobject.h"
 #include "xenia/vfs/devices/host_path_device.h"
 
+extern "C" {
+#include "third_party/FFmpeg/libavutil/md5.h"
+}
+
 namespace xe {
 namespace kernel {
 namespace xam {
 
-static const char* kThumbnailFileName = "__thumbnail.png";
-
 static const char* kGameUserContentDirName = "profile";
-static const char* kGameContentHeaderDirName = "Headers";
-
-static int content_device_id_ = 0;
-
-ContentPackage::ContentPackage(KernelState* kernel_state,
-                               const std::string_view root_name,
-                               const XCONTENT_AGGREGATE_DATA& data,
-                               const std::filesystem::path& package_path)
-    : kernel_state_(kernel_state), root_name_(root_name) {
-  device_path_ = fmt::format("\\Device\\Content\\{0}\\", ++content_device_id_);
-  content_data_ = data;
-
-  auto fs = kernel_state_->file_system();
-  auto device =
-      std::make_unique<vfs::HostPathDevice>(device_path_, package_path, false);
-  device->Initialize();
-  fs->RegisterDevice(std::move(device));
-  fs->RegisterSymbolicLink(root_name_ + ":", device_path_);
-}
-
-ContentPackage::~ContentPackage() {
-  auto fs = kernel_state_->file_system();
-  fs->UnregisterSymbolicLink(root_name_ + ":");
-  fs->UnregisterDevice(device_path_);
-}
 
 ContentManager::ContentManager(KernelState* kernel_state,
                                const std::filesystem::path& root_path)
@@ -107,23 +85,6 @@ std::filesystem::path ContentManager::ResolvePackagePath(
   return get_package_path(data.title_id);
 }
 
-std::filesystem::path ContentManager::ResolvePackageHeaderPath(
-    const std::string_view file_name, XContentType content_type,
-    uint32_t title_id) {
-  if (title_id == kCurrentlyRunningTitleId) {
-    title_id = kernel_state_->title_id();
-  }
-  auto title_id_str = fmt::format("{:08X}", title_id);
-  auto content_type_str = fmt::format("{:08X}", uint32_t(content_type));
-  std::string final_name =
-      xe::string_util::trim(std::string(file_name)) + ".header";
-
-  // Header root path:
-  // content_root/title_id/Headers/content_type/
-  return root_path_ / title_id_str / kGameContentHeaderDirName /
-         content_type_str / final_name;
-}
-
 std::unordered_set<uint32_t> ContentManager::FindPublisherTitleIds(
     uint32_t base_title_id) const {
   if (base_title_id == kCurrentlyRunningTitleId) {
@@ -159,7 +120,8 @@ std::unordered_set<uint32_t> ContentManager::FindPublisherTitleIds(
 }
 
 std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
-    uint32_t device_id, XContentType content_type, uint32_t title_id) {
+    const uint32_t device_id, const XContentType content_type,
+    uint32_t title_id) {
   std::vector<XCONTENT_AGGREGATE_DATA> result;
 
   if (title_id == kCurrentlyRunningTitleId) {
@@ -179,32 +141,54 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
     auto file_infos = xe::filesystem::ListFiles(package_root);
 
     for (const auto& file_info : file_infos) {
-      if (file_info.type != xe::filesystem::FileInfo::Type::kDirectory) {
-        // Directories only.
-        continue;
-      }
+      const auto type = ResolvePackageType(file_info.path / file_info.name);
 
-      XCONTENT_AGGREGATE_DATA content_data;
-      if (XSUCCEEDED(ReadContentHeaderFile(xe::path_to_utf8(file_info.name),
-                                           content_type, content_data,
-                                           title_id))) {
-        result.emplace_back(std::move(content_data));
-      } else {
-        content_data.device_id = device_id;
-        content_data.content_type = content_type;
-        content_data.set_display_name(xe::path_to_utf16(file_info.name));
-        content_data.set_file_name(xe::path_to_utf8(file_info.name));
-        content_data.title_id = title_id;
-        result.emplace_back(std::move(content_data));
+      switch (type) {
+        case ContentPackage::PackageType::host: {
+          HostContentPackage package =
+              HostContentPackage(kernel_state_, file_info.path / file_info.name,
+                                 device_id, title_id, content_type);
+
+          result.emplace_back(*package.GetPackageContentData());
+        }; break;
+        case ContentPackage::PackageType::xcontent: {
+          XContentPackage package =
+              XContentPackage(kernel_state_, file_info.path / file_info.name);
+
+          result.emplace_back(*package.GetPackageContentData());
+        }; break;
+        default:
+          break;
       }
     }
   }
   return result;
 }
 
+ContentPackage::PackageType ContentManager::ResolvePackageType(
+    const std::filesystem::path path) const {
+  xe::filesystem::FileInfo info;
+
+  const bool success = xe::filesystem::GetInfo(path, &info);
+  if (!success) {
+    return ContentPackage::PackageType::unknown;
+  }
+
+  switch (info.type) {
+    case xe::filesystem::FileInfo::Type::kFile:
+      return ContentPackage::PackageType::xcontent;
+      break;
+    case xe::filesystem::FileInfo::Type::kDirectory:
+      return ContentPackage::PackageType::host;
+      break;
+    default:
+      break;
+  }
+  return ContentPackage::PackageType::unknown;
+}
+
 std::unique_ptr<ContentPackage> ContentManager::ResolvePackage(
-    const std::string_view root_name, const XCONTENT_AGGREGATE_DATA& data,
-    const uint32_t disc_number) {
+    const XCONTENT_AGGREGATE_DATA& data, const uint32_t disc_number) {
   auto package_path = ResolvePackagePath(data, disc_number);
   if (!std::filesystem::exists(package_path)) {
     return nullptr;
@@ -212,9 +196,19 @@ std::unique_ptr<ContentPackage> ContentManager::ResolvePackage(
 
   auto global_lock = global_critical_region_.Acquire();
 
-  auto package = std::make_unique<ContentPackage>(kernel_state_, root_name,
-                                                  data, package_path);
-  return package;
+  switch (ResolvePackageType(package_path)) {
+    case ContentPackage::PackageType::host:
+      return std::make_unique<HostContentPackage>(kernel_state_, package_path,
+                                                  &data);
+      break;
+    case ContentPackage::PackageType::xcontent:
+      return std::make_unique<XContentPackage>(kernel_state_, package_path,
+                                               &data);
+      break;
+    default:
+      break;
+  }
+  return nullptr;
 }
 
 bool ContentManager::ContentExists(const XCONTENT_AGGREGATE_DATA& data) {
@@ -222,67 +216,27 @@ bool ContentManager::ContentExists(const XCONTENT_AGGREGATE_DATA& data) {
   return std::filesystem::exists(path);
 }
 
-X_RESULT ContentManager::WriteContentHeaderFile(
-    const XCONTENT_AGGREGATE_DATA* data) {
-  auto header_path = ResolvePackageHeaderPath(
-      data->file_name(), data->content_type, data->title_id);
-  auto parent_path = header_path.parent_path();
+std::string ContentManager::GenerateUniquePackageId(
+    const std::filesystem::path path) {
+  AVMD5* md5 = av_md5_alloc();
+  av_md5_init(md5);
 
-  if (!std::filesystem::exists(parent_path)) {
-    if (!std::filesystem::create_directories(parent_path)) {
-      return X_STATUS_ACCESS_DENIED;
-    }
+  std::string path_as_string = xe::path_to_utf8(path);
+  av_md5_update(md5, (const uint8_t*)(path_as_string.c_str()),
+                (int)path_as_string.length());
+  uint8_t digest[16];
+  av_md5_final(md5, digest);
+
+  std::string unique_id = "";
+  for (uint8_t i = 0; i < 16; i++) {
+    unique_id += fmt::format("{:02X}", digest[i]);
   }
-
-  xe::filesystem::CreateEmptyFile(header_path);
-
-  if (std::filesystem::exists(header_path)) {
-    auto file = xe::filesystem::OpenFile(header_path, "wb");
-    fwrite(data, 1, sizeof(XCONTENT_AGGREGATE_DATA), file);
-    fclose(file);
-    return X_STATUS_SUCCESS;
-  }
-  return X_STATUS_NO_SUCH_FILE;
-}
-
-X_RESULT ContentManager::ReadContentHeaderFile(const std::string_view file_name,
-                                               XContentType content_type,
-                                               XCONTENT_AGGREGATE_DATA& data,
-                                               const uint32_t title_id) {
-  auto header_file_path =
-      ResolvePackageHeaderPath(file_name, content_type, title_id);
-  constexpr uint32_t header_size = sizeof(XCONTENT_AGGREGATE_DATA);
-
-  if (std::filesystem::exists(header_file_path)) {
-    auto file = xe::filesystem::OpenFile(header_file_path, "rb");
-
-    std::array<uint8_t, header_size> buffer;
-
-    auto file_size = std::filesystem::file_size(header_file_path);
-    if (file_size != header_size && file_size != sizeof(XCONTENT_DATA)) {
-      fclose(file);
-      return X_STATUS_END_OF_FILE;
-    }
-
-    size_t result = fread(buffer.data(), 1, file_size, file);
-    if (result != file_size) {
-      fclose(file);
-      return X_STATUS_END_OF_FILE;
-    }
-    fclose(file);
-    std::memcpy(&data, buffer.data(), buffer.size());
-    // It only reads basic info, however importing savefiles
-    // usually requires title_id to be provided
-    // Kinda simple workaround for that, but still assumption
-    data.title_id = title_id;
-    data.unk134 = kernel_state_->user_profile(uint32_t(0))->xuid();
-    return X_STATUS_SUCCESS;
-  }
-  return X_STATUS_NO_SUCH_FILE;
+  return unique_id;
 }
 
 X_RESULT ContentManager::CreateContent(const std::string_view root_name,
-                                       const XCONTENT_AGGREGATE_DATA& data) {
+                                       const XCONTENT_AGGREGATE_DATA& data,
+                                       const uint32_t flags) {
   auto global_lock = global_critical_region_.Acquire();
 
   if (open_packages_.count(string_key(root_name))) {
@@ -296,12 +250,21 @@ X_RESULT ContentManager::CreateContent(const std::string_view root_name,
     return X_ERROR_ALREADY_EXISTS;
   }
 
-  if (!std::filesystem::create_directories(package_path)) {
-    return X_ERROR_ACCESS_DENIED;
+  if (!std::filesystem::exists(package_path.parent_path())) {
+    if (!std::filesystem::create_directories(package_path.parent_path())) {
+      return X_ERROR_ACCESS_DENIED;
+    }
   }
 
-  auto package = ResolvePackage(root_name, data);
+  const ContentPackage::PackageType saving_package_type =
+      ContentPackage::PackageType::host;
+
+  auto package = ContentPackage::CreatePackage(
+      kernel_state_, saving_package_type, package_path, &data);
+
   assert_not_null(package);
+  package->CreatePackageFile(flags);
+  package->MountPackage(root_name);
 
   open_packages_.insert({string_key::create(root_name), package.release()});
 
@@ -325,12 +288,25 @@ X_RESULT ContentManager::OpenContent(const std::string_view root_name,
   }
 
   // Open package.
-  auto package = ResolvePackage(root_name, data, disc_number);
+  auto package = ResolvePackage(data, disc_number);
   assert_not_null(package);
 
+  package->MountPackage(root_name);
   open_packages_.insert({string_key::create(root_name), package.release()});
 
   return X_ERROR_SUCCESS;
+}
+
+uint32_t ContentManager::GetContentLicense(
+    const std::string_view root_name) const {
+  auto global_lock = global_critical_region_.Acquire();
+
+  if (!open_packages_.count(string_key(root_name))) {
+    // Already content open with this root name.
+    return 0;
+  }
+
+  return open_packages_.at(string_key(root_name))->GetLicense();
 }
 
 X_RESULT ContentManager::CloseContent(const std::string_view root_name) {
@@ -352,34 +328,27 @@ X_RESULT ContentManager::CloseContent(const std::string_view root_name) {
 X_RESULT ContentManager::GetContentThumbnail(
     const XCONTENT_AGGREGATE_DATA& data, std::vector<uint8_t>* buffer) {
   auto global_lock = global_critical_region_.Acquire();
-  auto package_path = ResolvePackagePath(data);
-  auto thumb_path = package_path / kThumbnailFileName;
-  if (std::filesystem::exists(thumb_path)) {
-    auto file = xe::filesystem::OpenFile(thumb_path, "rb");
-    size_t file_len = std::filesystem::file_size(thumb_path);
-    buffer->resize(file_len);
-    fread(const_cast<uint8_t*>(buffer->data()), 1, buffer->size(), file);
-    fclose(file);
-    return X_ERROR_SUCCESS;
-  } else {
+  auto package = ResolvePackage(data);
+  if (!package) {
     return X_ERROR_FILE_NOT_FOUND;
   }
+
+  const auto thumbnail = package->GetPackageThumbnail();
+  memcpy(buffer->data(), thumbnail.data(), thumbnail.size());
+  return X_ERROR_SUCCESS;
 }
 
 X_RESULT ContentManager::SetContentThumbnail(
     const XCONTENT_AGGREGATE_DATA& data, std::vector<uint8_t> buffer) {
   auto global_lock = global_critical_region_.Acquire();
-  auto package_path = ResolvePackagePath(data);
-  std::filesystem::create_directories(package_path);
-  if (std::filesystem::exists(package_path)) {
-    auto thumb_path = package_path / kThumbnailFileName;
-    auto file = xe::filesystem::OpenFile(thumb_path, "wb");
-    fwrite(buffer.data(), 1, buffer.size(), file);
-    fclose(file);
-    return X_ERROR_SUCCESS;
-  } else {
+  auto package = ResolvePackage(data);
+  if (!package) {
     return X_ERROR_FILE_NOT_FOUND;
   }
+
+  package->SetPackageThumbnail(buffer);
+
+  return X_ERROR_SUCCESS;
 }
 
 X_RESULT ContentManager::DeleteContent(const XCONTENT_AGGREGATE_DATA& data) {
@@ -411,7 +380,7 @@ std::filesystem::path ContentManager::ResolveGameUserContentPath() {
 bool ContentManager::IsContentOpen(const XCONTENT_AGGREGATE_DATA& data) const {
   return std::any_of(open_packages_.cbegin(), open_packages_.cend(),
                      [data](std::pair<string_key, ContentPackage*> content) {
-                       return data == content.second->GetPackageContentData();
+                       return &data == content.second->GetPackageContentData();
                      });
 }
 

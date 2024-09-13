@@ -8,7 +8,7 @@
  */
 
 #include "xenia/vfs/virtual_file_system.h"
-#include "xenia/kernel/xam/content_manager.h"
+#include "xenia/kernel/xam/content/content_manager.h"
 #include "xenia/vfs/devices/xcontent_container_device.h"
 
 #include "devices/host_path_entry.h"

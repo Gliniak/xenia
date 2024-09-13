@@ -16,7 +16,8 @@
 
 #include "xenia/base/math.h"
 #include "xenia/kernel/util/xex2_info.h"
-#include "xenia/kernel/xam/content_manager.h"
+#include "xenia/kernel/xam/content/content_manager.h"
+#include "xenia/kernel/xam/content/xcontent.h"
 #include "xenia/vfs/device.h"
 #include "xenia/vfs/devices/stfs_xbox.h"
 
@@ -50,7 +51,7 @@ class XContentContainerDevice : public Device {
       return files_total_size_ -
              xe::round_up(header_->content_header.header_size, kBlockSize);
     }
-    return files_total_size_ - sizeof(XContentContainerHeader);
+    return files_total_size_ - sizeof(kernel::xam::XContentContainerHeader);
   }
 
   uint32_t title_id() const {
@@ -80,7 +81,7 @@ class XContentContainerDevice : public Device {
   // multiple file.
   virtual Result LoadHostFiles(FILE* header_file) = 0;
   // Initialize any container specific fields.
-  virtual void SetupContainer() {};
+  virtual void SetupContainer(){};
 
   Entry* ResolvePath(const std::string_view path);
   void CloseFiles();
@@ -95,7 +96,7 @@ class XContentContainerDevice : public Device {
 
   const std::filesystem::path& GetHostPath() const { return host_path_; }
 
-  const XContentContainerHeader* GetContainerHeader() const {
+  const kernel::xam::XContentContainerHeader* GetContainerHeader() const {
     return header_.get();
   }
 
@@ -105,10 +106,11 @@ class XContentContainerDevice : public Device {
   std::map<size_t, FILE*> files_;
   size_t files_total_size_;
   std::unique_ptr<Entry> root_entry_;
-  std::unique_ptr<XContentContainerHeader> header_;
+  std::unique_ptr<kernel::xam::XContentContainerHeader> header_;
 
  private:
-  static XContentContainerHeader* ReadContainerHeader(FILE* host_file);
+  static kernel::xam::XContentContainerHeader* ReadContainerHeader(
+      FILE* host_file);
 };
 
 }  // namespace vfs

@@ -29,7 +29,7 @@
 #include "xenia/kernel/util/object_table.h"
 #include "xenia/kernel/util/xdbf_utils.h"
 #include "xenia/kernel/xam/app_manager.h"
-#include "xenia/kernel/xam/content_manager.h"
+#include "xenia/kernel/xam/content/content_manager.h"
 #include "xenia/kernel/xam/user_profile.h"
 #include "xenia/kernel/xevent.h"
 #include "xenia/memory.h"
