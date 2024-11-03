@@ -160,6 +160,14 @@ dword_result_t XamContentCreateEnumerator_entry(
   }
 
   if (!device_info || device_info->device_id == DummyDeviceId::ODD) {
+    auto disc_enumerated_data =
+        kernel_state()->content_manager()->ListContentODD(
+            static_cast<uint32_t>(DummyDeviceId::ODD), 0,
+            kernel_state()->title_id(), XContentType(uint32_t(content_type)));
+
+    enumerated_content.insert(enumerated_content.end(),
+                              disc_enumerated_data.cbegin(),
+                              disc_enumerated_data.cend());
     // TODO(gibbed): disc drive content
   }
 
