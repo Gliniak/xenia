@@ -73,14 +73,18 @@ jobs:
         with:
           fetch-depth: 0
       - name: Setup
-        run: .\xb setup
+        run: |
+            echo "dummy"
+        #run: .\xb setup
       - name: Build
-        run: .\xb build --config=Release --target=src\xenia-app
+        run: |
+            echo "dummy"
+        #run: .\xb build --config=Release --target=src\xenia-app
       - name: Prepare artifacts
         id: prepare_artifacts
         run: |
-          robocopy . build\bin\Windows\Release                                                                LICENSE /r:0 /w:0
-          robocopy   build\bin\Windows\Release artifacts\xenia_canary   xenia_canary.exe   xenia_canary.pdb   LICENSE /r:0 /w:0
+          robocopy . build\bin\Windows\Release                                                                        LICENSE /r:0 /w:0
+          robocopy   build\bin\Windows\Release artifacts\xenia_canary_windows   xenia_canary.exe   xenia_canary.pdb   LICENSE /r:0 /w:0
           If ($LastExitCode -le 7) { echo "LastExitCode = $LastExitCode";$LastExitCode = 0 }
       - name: Upload xenia canary artifacts
         if: steps.prepare_artifacts.outcome == 'success'
@@ -88,30 +92,5 @@ jobs:
         uses: actions/upload-artifact@main
         with:
           name: xenia_canary_vs${{ matrix.vsver }}
-          path: artifacts\xenia_canary
+          path: artifacts/xenia_canary_windows
           if-no-files-found: error
-      - name: Create release
-        if: |
-          github.repository == 'xenia-canary/xenia-canary' &&
-          github.event.action != 'pull_request' &&
-          github.ref == 'refs/heads/canary_experimental' &&
-          steps.upload_artifacts.outcome == 'success'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $asset="xenia_canary.zip"
-          rm -recurse -force artifacts\xenia_canary\*.pdb # Ideally this would use xr, but I can't get it to work
-          7z a $asset .\artifacts\xenia_canary\*
-          If ($(Get-Item $asset).length -le 100000) {
-            Throw "Error: Archive $asset too small!"
-          }
-          $tag=$env:GITHUB_SHA.SubString(0,7)
-          $branch=$($env:GITHUB_REF -replace 'refs/heads/')
-          $title="${tag}_$branch"
-          gh release create $tag $asset --target $env:GITHUB_SHA -t $title
-          # Remove canary_ to prevent conflicts from tag
-          $tag=$($branch -replace 'canary_')
-          gh release delete $tag -y
-          git push --delete origin $tag
-          git tag -d $tag
-          gh release create $tag $asset --target $env:GITHUB_SHA -t $branch

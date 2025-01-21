@@ -68,10 +68,31 @@ jobs:
           echo "AR=llvm-ar-${LLVM_VERSION}" >> $GITHUB_ENV
       - name: Setup
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-          sudo apt-add-repository "deb http://apt.llvm.org/${UBUNTU_BASE}/ llvm-toolchain-${UBUNTU_BASE}-$LLVM_VERSION main"
-          sudo apt-get -y update
-          sudo apt-get -y install mesa-vulkan-drivers valgrind libc++-dev libc++abi-dev libgtk-3-dev libsdl2-dev libvulkan-dev libx11-dev libx11-xcb-dev clang-$LLVM_VERSION clang-format-$LLVM_VERSION llvm-$LLVM_VERSION ninja-build cmake
-          ./xb setup
+            echo "dummy"
+        #run: |
+        #  wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+        #  sudo apt-add-repository "deb http://apt.llvm.org/${UBUNTU_BASE}/ llvm-toolchain-${UBUNTU_BASE}-$LLVM_VERSION main"
+        #  sudo apt-get -y update
+        #  sudo apt-get -y install mesa-vulkan-drivers valgrind libc++-dev libc++abi-dev libgtk-3-dev libsdl2-dev libvulkan-dev libx11-dev libx11-xcb-dev clang-$LLVM_VERSION clang-format-$LLVM_VERSION llvm-$LLVM_VERSION ninja-build cmake
+        #  ./xb setup
       - name: Build
-        run: ./xb build --config=Release
+        run: |
+            pwd
+            mkdir -p build/bin/Linux/Release
+            echo "LOL" > build/bin/Linux/Release/xenia_canary
+            ls build/bin/Linux/Release
+        #run: ./xb build --config=Release
+      - name: Prepare artifacts
+        id: prepare_artifacts
+        run: |
+          mkdir artifacts
+          cp build/bin/Linux/Release/xenia_canary artifacts/xenia_canary
+          ls artifacts
+      - name: Upload Xenia Canary artifacts
+        if: steps.prepare_artifacts.outcome == 'success'
+        id: upload_artifacts
+        uses: actions/upload-artifact@main
+        with:
+          name: xenia_canary
+          path: artifacts/
+          if-no-files-found: error

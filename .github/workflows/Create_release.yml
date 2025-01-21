@@ -1,0 +1,52 @@
+name: Create Release
+
+on:
+  workflow_run:
+    workflows: ["Windows build", "Linux build"]
+    types:
+      - success
+      
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: artifacts
+          path: artifacts/
+
+      - name: Create GitHub Release
+        #if: |
+        #  github.repository == 'xenia-canary/xenia-canary' &&
+        #  github.event.action != 'pull_request' &&
+        #  github.ref == 'refs/heads/canary_experimental'
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+
+      - name: Add Windows Build
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts/xenia_canary.exe
+          asset_name: xenia_canary.exe
+          asset_content_type: application/octet-stream
+
+      - name: Add Linux Build
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts/xenia_canary
+          asset_name: xenia_canary
+          asset_content_type: application/octet-stream
