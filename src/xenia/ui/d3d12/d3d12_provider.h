@@ -19,12 +19,6 @@ namespace xe {
 namespace ui {
 namespace d3d12 {
 
-enum {
-  UPLOAD_RESULT_CREATE_FAILED = 0,
-  UPLOAD_RESULT_CREATE_SUCCESS = 1,
-  UPLOAD_RESULT_CREATE_CPUVISIBLE = 2
-};
-
 class D3D12Provider : public GraphicsProvider {
  public:
   ~D3D12Provider();
@@ -38,11 +32,6 @@ class D3D12Provider : public GraphicsProvider {
           Presenter::FatalErrorHostGpuLossCallback) override;
 
   std::unique_ptr<ImmediateDrawer> CreateImmediateDrawer() override;
-  uint32_t CreateUploadResource(
-      D3D12_HEAP_FLAGS HeapFlags, _In_ const D3D12_RESOURCE_DESC* pDesc,
-      D3D12_RESOURCE_STATES InitialResourceState, REFIID riidResource,
-      void** ppvResource,
-      const D3D12_CLEAR_VALUE* pOptimizedClearValue = nullptr) const;
 
   IDXGIFactory2* GetDXGIFactory() const { return dxgi_factory_; }
   // nullptr if PIX not attached.

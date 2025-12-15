@@ -9,14 +9,16 @@
 
 #include "xenia/ui/d3d12/d3d12_provider.h"
 
+#include <malloc.h>
 #include <cstdlib>
+#include <ranges>
 
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/ui/d3d12/d3d12_immediate_drawer.h"
 #include "xenia/ui/d3d12/d3d12_presenter.h"
-#include "xenia/ui/d3d12/d3d12_util.h"
+
 DEFINE_bool(d3d12_debug, false, "Enable Direct3D 12 and DXGI debug layer.",
             "D3D12");
 DEFINE_bool(d3d12_break_on_error, false,
@@ -74,7 +76,6 @@ std::unique_ptr<D3D12Provider> D3D12Provider::Create() {
         "supported GPUs.");
     return nullptr;
   }
-
   return provider;
 }
 
@@ -129,7 +130,7 @@ bool D3D12Provider::EnableIncreaseBasePriorityPrivilege() {
   if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &token)) {
     return false;
   }
-  bool enabled = AdjustTokenPrivileges(token, false, &privileges,
+  bool enabled = AdjustTokenPrivileges(token, FALSE, &privileges,
                                        sizeof(privileges), nullptr, nullptr) &&
                  GetLastError() != ERROR_NOT_ALL_ASSIGNED;
   CloseHandle(token);
@@ -228,13 +229,13 @@ bool D3D12Provider::Initialize() {
             0, IID_PPV_ARGS(&dxgi_info_queue)))) {
       if (cvars::d3d12_break_on_error) {
         dxgi_info_queue->SetBreakOnSeverity(
-            DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION, true);
+            DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION, TRUE);
         dxgi_info_queue->SetBreakOnSeverity(
-            DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR, true);
+            DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR, TRUE);
       }
       if (cvars::d3d12_break_on_warning) {
         dxgi_info_queue->SetBreakOnSeverity(
-            DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_WARNING, true);
+            DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_WARNING, TRUE);
       }
       dxgi_info_queue->Release();
     }
@@ -366,12 +367,12 @@ bool D3D12Provider::Initialize() {
     d3d12_info_queue->PushStorageFilter(&d3d12_info_queue_filter);
     if (cvars::d3d12_break_on_error) {
       d3d12_info_queue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION,
-                                           true);
-      d3d12_info_queue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, true);
+                                           TRUE);
+      d3d12_info_queue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
     }
     if (cvars::d3d12_break_on_warning) {
       d3d12_info_queue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING,
-                                           true);
+                                           TRUE);
     }
     d3d12_info_queue->Release();
   }
@@ -495,22 +496,7 @@ bool D3D12Provider::Initialize() {
   pfn_dxgi_get_debug_interface1_(0, IID_PPV_ARGS(&graphics_analysis_));
   return true;
 }
-uint32_t D3D12Provider::CreateUploadResource(
-    D3D12_HEAP_FLAGS HeapFlags, _In_ const D3D12_RESOURCE_DESC* pDesc,
-    D3D12_RESOURCE_STATES InitialResourceState, REFIID riidResource,
-    void** ppvResource, const D3D12_CLEAR_VALUE* pOptimizedClearValue) const {
-  auto device = GetDevice();
 
-  if (FAILED(device->CreateCommittedResource(
-          &ui::d3d12::util::kHeapPropertiesUpload, HeapFlags, pDesc,
-          InitialResourceState, pOptimizedClearValue, riidResource,
-          ppvResource))) {
-    XELOGE("Failed to create the gamma ramp upload buffer");
-    return UPLOAD_RESULT_CREATE_FAILED;
-  }
-
-  return UPLOAD_RESULT_CREATE_SUCCESS;
-}
 std::unique_ptr<Presenter> D3D12Provider::CreatePresenter(
     Presenter::HostGpuLossCallback host_gpu_loss_callback) {
   return D3D12Presenter::Create(host_gpu_loss_callback, *this);
