@@ -1,0 +1,52 @@
+name: Windows (x86-64)
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        description: 'Build configuration (Release)'
+        required: false
+        default: 'release'
+        type: string
+
+jobs:
+  build:
+    runs-on: windows-2025
+
+    env:
+      POWERSHELL_TELEMETRY_OPTOUT: 1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Setup build environment
+        run: .\xb setup
+
+      - name: Build Xenia
+        run: |
+          .\xb build --config=Release --target=src\xenia-app
+
+      - name: Prepare artifacts
+        id: prepare_artifacts
+        run: |
+          foreach ($file in 'build\bin\Windows\Release\xenia_canary.exe','build\bin\Windows\Release\xenia_canary.pdb') {
+            if ((get-item $file).Length -le 100000) {
+              echo "::error::$file is too small."
+            }
+          }
+          robocopy . build\bin\Windows\Release                                                                LICENSE /r:0 /w:0
+          robocopy   build\bin\Windows\Release artifacts\xenia_canary   xenia_canary.exe   xenia_canary.pdb   LICENSE /r:0 /w:0
+          If ($LastExitCode -le 7) { echo "LastExitCode = $LastExitCode";$LastExitCode = 0 }
+
+      - name: Upload Xenia Canary artifact
+        if: steps.prepare_artifacts.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: xenia_canary_windows
+          path: artifacts\xenia_canary
+          if-no-files-found: error
+          retention-days: 7
