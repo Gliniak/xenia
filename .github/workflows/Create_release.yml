@@ -1,0 +1,162 @@
+name: Create Release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Full commit SHA for tagging'
+        required: true
+        type: string
+      commit_message:
+        description: 'Commit message for release notes'
+        required: true
+        type: string
+      has_windows:
+        description: 'Whether Windows build succeeded'
+        required: true
+        type: string
+      has_linux:
+        description: 'Whether Linux build succeeded'
+        required: true
+        type: string
+      # has_macos:
+      #   description: 'Whether macOS build succeeded'
+      #   required: false
+      #   type: string
+      #   default: 'false'
+      # has_android:
+      #   description: 'Whether Android build succeeded'
+      #   required: false
+      #   type: string
+      #   default: 'false'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Compute release metadata
+        id: meta
+        run: |
+          FULL_SHA="${{ inputs.tag }}"
+          SHORT_SHA="${FULL_SHA:0:7}"
+          TAG_NAME="${SHORT_SHA}_canary_experimental"
+
+          TITLE=$(echo "${{ inputs.commit_message }}" | head -n 1)
+
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "title=${TITLE}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "body<<RELEASE_BODY_EOF"
+            echo "${{ inputs.commit_message }}"
+            echo ""
+            echo "---"
+            echo "**Platforms in this release:**"
+            if [ "${{ inputs.has_windows }}" = "true" ]; then echo "- ✅ Windows"; fi
+            if [ "${{ inputs.has_linux }}" = "true" ]; then echo "- ✅ Linux"; fi
+            if [ "${{ inputs.has_windows }}" != "true" ]; then echo "- ❌ Windows (build failed)"; fi
+            if [ "${{ inputs.has_linux }}" != "true" ]; then echo "- ❌ Linux (build failed)"; fi
+            echo "RELEASE_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # --- Download artifacts only for platforms that succeeded ---
+
+      - name: Download Windows artifacts
+        if: inputs.has_windows == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: xenia_canary_windows
+          path: artifacts/windows/xenia_canary
+
+      - name: Download Linux artifacts
+        if: inputs.has_linux == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: xenia_canary_linux
+          path: artifacts/linux
+
+      # Uncomment when platforms are enabled:
+      # - name: Download macOS artifacts
+      #   if: inputs.has_macos == 'true'
+      #   uses: actions/download-artifact@v4
+      #   with:
+      #     name: xenia_canary_macos
+      #     path: artifacts/macos
+
+      # - name: Download Android artifacts
+      #   if: inputs.has_android == 'true'
+      #   uses: actions/download-artifact@v4
+      #   with:
+      #     name: xenia_canary_android
+      #     path: artifacts/android
+
+      # --- Package everything into release assets ---
+
+      - name: Package release assets
+        run: |
+          mkdir -p release_assets
+
+          # Windows
+          if [ -d "artifacts/windows/xenia_canary" ]; then
+            cd artifacts/windows/xenia_canary
+            zip -r ../../../release_assets/xenia_canary_windows.zip .
+            cd ../../..
+          fi
+
+          # Linux (already tar.gz)
+          if [ -f "artifacts/linux/xenia_canary_linux.tar.gz" ]; then
+            cp artifacts/linux/xenia_canary_linux.tar.gz release_assets/
+          fi
+          if [ -f "artifacts/linux-vfs/xenia-vfs-dump_canary_linux.tar.gz" ]; then
+            cp artifacts/linux-vfs/xenia-vfs-dump_canary_linux.tar.gz release_assets/
+          fi
+
+          # macOS (uncomment when enabled)
+          # if [ -f "artifacts/macos/xenia_canary_macos.tar.gz" ]; then
+          #   cp artifacts/macos/xenia_canary_macos.tar.gz release_assets/
+          # fi
+
+          # Android (uncomment when enabled)
+          # if [ -f "artifacts/android/xenia_canary_android.zip" ]; then
+          #   cp artifacts/android/xenia_canary_android.zip release_assets/
+          # fi
+
+          echo "=== Release assets ==="
+          ls -lh release_assets/
+
+      # --- Create the release ---
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          TAG="${{ steps.meta.outputs.tag_name }}"
+          TITLE="${{ steps.meta.outputs.title }}"
+          BODY="${{ steps.meta.outputs.body }}"
+
+          echo "Creating release: ${TAG}"
+
+          # Check if tag/release already exists (re-run safety)
+          if gh release view "${TAG}" --repo "${REPO}" --json tagName 2>/dev/null; then
+            echo "Release ${TAG} exists, uploading new assets..."
+            gh release upload "${TAG}" \
+              --repo "${REPO}" \
+              --clobber \
+              release_assets/*
+          else
+            gh release create "${TAG}" \
+              --repo "${REPO}" \
+              --target "${{ inputs.tag }}" \
+              --title "${TITLE}" \
+              --notes "${BODY}" \
+              --latest \
+              release_assets/*
+          fi
+
+          echo "✅ Release ${TAG} published"
