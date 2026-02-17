@@ -51,6 +51,8 @@ static constexpr const uint16_t kBaseKernelBuildVersion = 1888;
 // (?), used by KeGetCurrentProcessType
 constexpr uint32_t X_PROCTYPE_IDLE = 0;
 constexpr uint32_t X_PROCTYPE_TITLE = 1;
+
+
 constexpr uint32_t X_PROCTYPE_SYSTEM = 2;
 
 struct X_KPROCESS {
