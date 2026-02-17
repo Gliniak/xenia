@@ -57,13 +57,15 @@ KernelState::KernelState(Emulator* emulator)
       memory_(emulator->memory()),
       dispatch_thread_running_(false),
       dpc_list_(emulator->memory()),
-      kernel_trampoline_group_(emulator->processor()->backend()) {
+      kernel_trampoline_group_(emulator->processor()->backend()) 
+{
   assert_null(shared_kernel_state_);
+
   shared_kernel_state_ = this;
   processor_ = emulator->processor();
   file_system_ = emulator->file_system();
   xam_state_ = std::make_unique<xam::XamState>(emulator, this);
-  smc_ = std::make_unique<SystemManagementController>();
+  smc_ = 		std::make_unique<SystemManagementController>();
 
   InitializeKernelGuestGlobals();
   kernel_version_ = KernelVersion(cvars::kernel_build_version);
