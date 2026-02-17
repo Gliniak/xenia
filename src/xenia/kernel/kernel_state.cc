@@ -65,7 +65,7 @@ KernelState::KernelState(Emulator* emulator)
   xam_state_ = std::make_unique<xam::XamState>(emulator, this);
   smc_ = std::make_unique<SystemManagementController>();
 
-  InitializeKernelGuestGlobals();
+  //InitializeKernelGuestGlobals();
   kernel_version_ = KernelVersion(cvars::kernel_build_version);
 
   // Hardcoded maximum of 2048 TLS slots.
