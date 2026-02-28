@@ -8,6 +8,7 @@
  */
 
 #include "xenia/base/logging.h"
+#include "xenia/emulator.h"
 #include "xenia/kernel/info/file.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
@@ -18,7 +19,10 @@
 #include "xenia/kernel/xsymboliclink.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/vfs/device.h"
+#include "xenia/vfs/devices/host_path_device.h"
 #include "xenia/xbox.h"
+
+DECLARE_bool(mount_cache);
 
 namespace xe {
 namespace kernel {
@@ -709,6 +713,39 @@ dword_result_t IoCreateDevice_entry(dword_t driver_object,
     // pointer to itself?
     xe::store_and_swap<uint32_t>(out + 0xC, out_guest);
   }
+
+  // StfsDevice
+  if (device_type == 0x3D) {
+    // We're only handling creation of cache device
+    if (device_name) {
+      auto dev_name = util::TranslateAnsiString(kernel_memory(), device_name);
+      if (dev_name.ends_with("cache0") || dev_name.ends_with("cache1")) {
+        if (!cvars::mount_cache) {
+          return X_STATUS_UNSUCCESSFUL;
+        }
+        const size_t pos = dev_name.find_last_of('\\');
+
+        const std::string_view short_dev_name =
+            (pos != std::string::npos) ? dev_name.substr(pos + 1) : dev_name;
+
+        auto cache_device = std::make_unique<xe::vfs::HostPathDevice>(
+            dev_name,
+            kernel_state()->emulator()->storage_root() / short_dev_name, false);
+
+        if (!cache_device->Initialize()) {
+          XELOGE("Unable to create {} stfs device", short_dev_name);
+          return X_STATUS_UNSUCCESSFUL;
+        } else {
+          if (!kernel_state()->file_system()->RegisterDevice(
+                  std::move(cache_device))) {
+            XELOGE("Unable to register {} stfs device", short_dev_name);
+            return X_STATUS_UNSUCCESSFUL;
+          }
+        }
+      }
+    }
+  }
+
   xe::store<uint8_t>(out + 0x1C, static_cast<uint8_t>(device_type));
 
   uint32_t flags_field_value = 16;

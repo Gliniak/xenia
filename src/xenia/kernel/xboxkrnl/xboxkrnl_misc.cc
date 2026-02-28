@@ -7,10 +7,14 @@
  ******************************************************************************
  */
 
+#include "xenia/emulator.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 #include "xenia/kernel/xthread.h"
+#include "xenia/vfs/devices/host_path_device.h"
 #include "xenia/xbox.h"
+
+DECLARE_bool(mount_cache);
 
 namespace xe {
 namespace kernel {
@@ -125,6 +129,49 @@ static qword_result_t KeQueryInterruptTime_entry(const ppc_context_t& ctx) {
   return xe::load_and_swap<uint64_t>(&bundle->interrupt_time);
 }
 DECLARE_XBOXKRNL_EXPORT1(KeQueryInterruptTime, kNone, kImplemented);
+
+// R3 is probably a struct, but now we only care about name.
+dword_result_t StfsCreateDevice_entry(pointer_t<X_ANSI_STRING> device_name,
+                                      dword_t r4) {
+  assert_true(r4 == 0x58);
+
+  if (!device_name) {
+    return X_STATUS_UNSUCCESSFUL;
+  }
+
+  auto dev_name = util::TranslateAnsiString(kernel_memory(), device_name);
+  if (dev_name.ends_with("cache0") || dev_name.ends_with("cache1")) {
+    if (!cvars::mount_cache) {
+      return X_STATUS_UNSUCCESSFUL;
+    }
+    const size_t pos = dev_name.find_last_of('\\');
+
+    const std::string_view short_dev_name =
+        (pos != std::string::npos) ? dev_name.substr(pos + 1) : dev_name;
+
+    auto cache_device = std::make_unique<xe::vfs::HostPathDevice>(
+        dev_name, kernel_state()->emulator()->storage_root() / short_dev_name,
+        false);
+
+    if (!cache_device->Initialize()) {
+      XELOGE("Unable to create {} stfs device", short_dev_name);
+      return X_STATUS_UNSUCCESSFUL;
+    } else {
+      if (!kernel_state()->file_system()->RegisterDevice(
+              std::move(cache_device))) {
+        XELOGE("Unable to register {} stfs device", short_dev_name);
+      }
+    }
+    return X_STATUS_SUCCESS;
+  } else {
+    XELOGW("StfsCreateDevice: Tried to create unsupported device: {}",
+           dev_name);
+  }
+
+  return X_STATUS_UNSUCCESSFUL;
+}
+DECLARE_XBOXKRNL_EXPORT1(StfsCreateDevice, kNone, kStub);
+
 }  // namespace xboxkrnl
 }  // namespace kernel
 }  // namespace xe
