@@ -27,6 +27,7 @@
 #include "xenia/kernel/xobject.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/ui/imgui_host_notification.h"
+#include "xenia/avatars/asset_pack.h"
 
 #include "third_party/crypto/TinySHA1.hpp"
 
@@ -64,6 +65,8 @@ KernelState::KernelState(Emulator* emulator)
   file_system_ = emulator->file_system();
   xam_state_ = std::make_unique<xam::XamState>(emulator, this);
   smc_ = std::make_unique<SystemManagementController>();
+  avatar_asset_pack_ = std::make_unique<avatars::AssetPack>();
+  legacy_avatar_asset_pack_ = std::make_unique<avatars::AssetPack>();
 
   InitializeKernelGuestGlobals();
   kernel_version_ = KernelVersion(cvars::kernel_build_version);
