@@ -36,6 +36,12 @@
 #include "xenia/vfs/virtual_file_system.h"
 
 namespace xe {
+namespace avatars {
+class AssetPack;
+}  // namespace avatars
+}  // namespace xe
+
+namespace xe {
 class ByteStream;
 class Emulator;
 namespace cpu {
@@ -200,6 +206,14 @@ class KernelState {
 
   std::bitset<4> GetConnectedUsers() const;
 
+  avatars::AssetPack* avatar_asset_pack() const {
+    return avatar_asset_pack_.get();
+  }
+
+  avatars::AssetPack* legacy_avatar_asset_pack() const {
+    return legacy_avatar_asset_pack_.get();
+  }
+
   // Access must be guarded by the global critical region.
   util::ObjectTable* object_table() { return &object_table_; }
 
@@ -358,6 +372,9 @@ class KernelState {
   std::unique_ptr<XConfig> xconfig_;
 
   KernelVersion kernel_version_;
+
+  std::unique_ptr<avatars::AssetPack> avatar_asset_pack_;
+  std::unique_ptr<avatars::AssetPack> legacy_avatar_asset_pack_;
 
   xe::global_critical_region global_critical_region_;
 
