@@ -11,6 +11,7 @@
 
 #include "xenia/kernel/kernel_state.h"
 
+#include "xenia/avatars/asset_pack.h"
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/logging.h"
 #include "xenia/emulator.h"
@@ -27,7 +28,6 @@
 #include "xenia/kernel/xobject.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/ui/imgui_host_notification.h"
-#include "xenia/avatars/asset_pack.h"
 
 #include "third_party/crypto/TinySHA1.hpp"
 

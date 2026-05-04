@@ -70,7 +70,7 @@ struct VectorSerializer {
     instance.y = base_y + delta_y * (float)y;
     instance.z = base_z + delta_z * (float)z;
     if ((y & 1) != 0) {
-      //instance.z += 0.577350259f * delta_z;
+      // instance.z += 0.577350259f * delta_z;
       instance.z += (1.f / 3.f) * delta_z;
     }
     instance.x = base_x + delta_x * (float)x;

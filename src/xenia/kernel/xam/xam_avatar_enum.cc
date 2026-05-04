@@ -129,7 +129,6 @@ DECLARE_XAM_EXPORT1(XamAvatarBeginEnumAssets, kAvatars, kStub);
 
 dword_result_t XamAvatarEnumAssets_entry(lpvoid_t buffer,
                                          lpdword_t writtem_items, dword_t a3) {
-
   uint32_t dummy = 0;
   auto result = gAssetEnumerator.WriteItems(buffer, &dummy);
   *writtem_items = dummy;

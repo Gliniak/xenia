@@ -223,7 +223,8 @@ bool LoadAnimationToGuest(const AssetId& asset_id,
     return false;
   }
 
-  if (animation->compressed_data_bytes.size() > guest_animation->compressed_data_size) {
+  if (animation->compressed_data_bytes.size() >
+      guest_animation->compressed_data_size) {
     XELOGE(
         "Not enough space to copy avatar animation compressed data for {}! ({} "
         "> {})",
@@ -258,7 +259,8 @@ bool LoadAnimationToGuest(const AssetId& asset_id,
   assert_true(offsetof(X_AVATAR_ANIMATION, motions_offset) == 0x5980);
   assert_true(offsetof(X_AVATAR_ANIMATION, textures_offset) == 0x5984);
   assert_true(offsetof(X_AVATAR_ANIMATION, compressed_data_size) == 0x5988);
-  assert_true(offsetof(X_AVATAR_ANIMATION, compressed_data_buffer_ptr) == 0x598C);
+  assert_true(offsetof(X_AVATAR_ANIMATION, compressed_data_buffer_ptr) ==
+              0x598C);
 
   guest_animation->frame_count = animation->frame_count;
   guest_animation->frames_per_second = animation->frames_per_second;
@@ -278,8 +280,8 @@ bool LoadAnimationToGuest(const AssetId& asset_id,
               guest_animation->compressed_data_size);
 
   /*
-  auto dump_name = fmt::format("animation_{}_memory_xenia.bin", asset_id.to_string());
-  auto dump_handle = fopen(dump_name.c_str(), "wb");
+  auto dump_name = fmt::format("animation_{}_memory_xenia.bin",
+  asset_id.to_string()); auto dump_handle = fopen(dump_name.c_str(), "wb");
   fwrite(guest_animation, sizeof(X_AVATAR_ANIMATION), 1, dump_handle);
   fclose(dump_handle);
   */
