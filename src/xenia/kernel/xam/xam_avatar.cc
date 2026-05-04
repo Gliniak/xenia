@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2022 Ben Vanik. All rights reserved.                             *
+ * Copyright 2026 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -266,11 +266,21 @@ dword_result_t XamAvatarGetAssets_entry(
   const auto& metadata = *metadata_ptr;
   auto run = [metadata, category_mask, flags, cpu_buffer,
               gpu_buffer]() -> X_RESULT {
+    assert_true(gTitleVersion > 0);
+    uint32_t skeleton_version;
+    AssetPack* asset_pack;
+    if (gTitleVersion >= 3) {
+      asset_pack = kernel_state()->avatar_asset_pack();
+      skeleton_version = 2;
+    } else {
+      asset_pack = kernel_state()->legacy_avatar_asset_pack();
+      skeleton_version = 1;
+    }
     avatars::MemoryBlock cpu_memory(cpu_buffer, 16);
     avatars::MemoryBlock gpu_memory(gpu_buffer, 4096);
     auto result = avatars::LoadAssetsToGuest(
-        metadata, category_mask, flags, kernel_state()->avatar_asset_pack(),
-        &cpu_memory, &gpu_memory, gCoordinateSystem);
+        metadata, category_mask, flags, asset_pack, &cpu_memory, &gpu_memory,
+        skeleton_version, gCoordinateSystem);
     if (result) {
       cpu_memory.ResolvePointers(cpu_buffer.guest_address());
       gpu_memory.ResolvePointers(gpu_buffer.guest_address());

@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2022 Ben Vanik. All rights reserved.                             *
+ * Copyright 2026 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -17,6 +17,7 @@
 #include "xenia/avatars/memory_block.h"
 #include "xenia/avatars/model.h"
 #include "xenia/avatars/skeleton.h"
+#include "xenia/avatars/skeleton_scaling.h"
 #include "xenia/avatars/strb.h"
 #include "xenia/base/bit_stream.h"
 #include "xenia/base/filesystem.h"
@@ -123,6 +124,20 @@ static uint8_t skeleton_kinect[] = {
     0xA3, 0x53, 0x23, 0xE0, 0xCA, 0xA9, 0xE6, 0xB1, 0x23, 0x83, 0x80, 0xA2,
     0x29, 0x00, 0xC0, 0x73, 0x6E, 0x61, 0xEE, 0xA8, 0x88, 0x08,
 };
+
+static BodyType GetBodyType(const X_AVATAR_METADATA& metadata) {
+  const AssetId male_body_asset_id = {
+      2, 0, 1, {0xC1, 0xC8, 0xF1, 0x09, 0xA1, 0x9C, 0xB2, 0xE0}};
+  const AssetId female_body_asset_id = {
+      2, 0, 2, {0xC1, 0xC8, 0xF1, 0x09, 0xA1, 0x9C, 0xB2, 0xE0}};
+  if (metadata.body_component.asset_id == male_body_asset_id) {
+    return BodyType::kMale;
+  }
+  if (metadata.body_component.asset_id == female_body_asset_id) {
+    return BodyType::kFemale;
+  }
+  return BodyType::kUnknown;
+}
 
 static void SaveModel(const X_AVATAR_COMPONENT_INFO& component_info,
                       std::shared_ptr<Model> model, AssetPack* asset_pack) {
@@ -553,107 +568,36 @@ bool SkeletonToGuest(X_AVATAR_SKELETON* guest, std::shared_ptr<Skeleton> host,
     auto& guest_joint = guest_joints[i];
     const auto& host_joint = host->joints[i];
     guest_joint.parent_index = host_joint.parent_index;
-    guest_joint.first_child_index = invalid_index;
-    guest_joint.next_index = invalid_index;
-    guest_joint.bindpose.position.x = host_joint.position.x;
-    guest_joint.bindpose.position.y = host_joint.position.y;
-    guest_joint.bindpose.position.z = host_joint.position.z;
+    guest_joint.first_child_index = host_joint.first_child_index;
+    guest_joint.next_index = host_joint.next_index;
+    guest_joint.bindpose.position.x = host_joint.bindpose.position.x;
+    guest_joint.bindpose.position.y = host_joint.bindpose.position.y;
+    guest_joint.bindpose.position.z = host_joint.bindpose.position.z;
     guest_joint.bindpose.position.w = 1.f;
-    guest_joint.bindpose.rotation.x = host_joint.rotation.x;
-    guest_joint.bindpose.rotation.y = host_joint.rotation.y;
-    guest_joint.bindpose.rotation.z = host_joint.rotation.z;
-    guest_joint.bindpose.rotation.w = host_joint.rotation.w;
-  }
-
-  for (uint8_t i = joint_count - 1; i >= 1; --i) {
-    auto& guest_joint = guest_joints[i];
-    const auto& host_joint = host->joints[i];
-    const auto& host_parent_joint = host->joints[host_joint.parent_index];
-
-    auto matrixA = DirectX::XMMatrixRotationQuaternion(
-        DirectX::XMVectorSet(host_joint.rotation.x, host_joint.rotation.y,
-                             host_joint.rotation.z, 1.f));
-    matrixA.r[3] =
-        DirectX::XMVectorSet(host_joint.position.x, host_joint.position.y,
-                             host_joint.position.z, 1.f);
-
-    auto matrix = DirectX::XMMatrixRotationQuaternion(DirectX::XMVectorSet(
-        host_parent_joint.rotation.x, host_parent_joint.rotation.y,
-        host_parent_joint.rotation.z, 1.f));
-    matrix.r[3] = DirectX::XMVectorSet(host_parent_joint.position.x,
-                                       host_parent_joint.position.y,
-                                       host_parent_joint.position.z, 1.f);
-
-    auto matrixB = DirectX::XMMatrixInverse(nullptr, matrix);
-    auto matrix2 = DirectX::XMMatrixMultiply(matrixA, matrixB);
-
-    auto position = matrix2.r[3];
-    auto rotation = DirectX::XMQuaternionRotationMatrix(matrix2);
-
-    guest_joint.pose.position.x = position.m128_f32[0];
-    guest_joint.pose.position.y = position.m128_f32[1];
-    guest_joint.pose.position.z = position.m128_f32[2];
-    guest_joint.pose.position.w = position.m128_f32[3];
-    guest_joint.pose.rotation.x = rotation.m128_f32[0];
-    guest_joint.pose.rotation.y = rotation.m128_f32[1];
-    guest_joint.pose.rotation.z = rotation.m128_f32[2];
-    guest_joint.pose.rotation.w = rotation.m128_f32[3];
-    guest_joint.pose.scale.x = 1.f;
-    guest_joint.pose.scale.y = 1.f;
-    guest_joint.pose.scale.z = 1.f;
-    guest_joint.pose.scale.w = 1.f;
-  }
-
-  {
-    auto& guest_joint = guest_joints[0];
-    const auto& host_joint = host->joints[0];
-    guest_joint.pose.position.x = host_joint.position.x;
-    guest_joint.pose.position.y = host_joint.position.y;
-    guest_joint.pose.position.z = host_joint.position.z;
+    guest_joint.bindpose.rotation.x = host_joint.bindpose.rotation.x;
+    guest_joint.bindpose.rotation.y = host_joint.bindpose.rotation.y;
+    guest_joint.bindpose.rotation.z = host_joint.bindpose.rotation.z;
+    guest_joint.bindpose.rotation.w = host_joint.bindpose.rotation.w;
+    guest_joint.pose.position.x = host_joint.pose.position.x;
+    guest_joint.pose.position.y = host_joint.pose.position.y;
+    guest_joint.pose.position.z = host_joint.pose.position.z;
     guest_joint.pose.position.w = 1.f;
-    guest_joint.pose.rotation.x = host_joint.rotation.x;
-    guest_joint.pose.rotation.y = host_joint.rotation.y;
-    guest_joint.pose.rotation.z = host_joint.rotation.z;
-    guest_joint.pose.rotation.w = host_joint.rotation.w;
-    guest_joint.pose.scale.x = 1.0f;
-    guest_joint.pose.scale.y = 1.0f;
-    guest_joint.pose.scale.z = 1.0f;
-    guest_joint.pose.scale.w = 1.0f;
-  }
-
-  for (uint8_t parent_index = 0; parent_index < joint_count; ++parent_index) {
-    uint8_t first_child_index = invalid_index;
-    for (uint8_t child_index = 0; child_index < joint_count; ++child_index) {
-      if (host->joints[child_index].parent_index == parent_index) {
-        first_child_index = child_index;
-        break;
-      }
-    }
-
-    // didn't find any children
-    if (first_child_index == invalid_index) {
-      continue;
-    }
-
-    guest_joints[parent_index].first_child_index = first_child_index;
-
-    // find next
-    uint8_t prev_index = first_child_index;
-    for (uint8_t next_index = first_child_index + 1; next_index < joint_count;
-         ++next_index) {
-      if (host->joints[next_index].parent_index == parent_index) {
-        guest_joints[prev_index].next_index = next_index;
-        prev_index = next_index;
-      }
-    }
+    guest_joint.pose.rotation.x = host_joint.pose.rotation.x;
+    guest_joint.pose.rotation.y = host_joint.pose.rotation.y;
+    guest_joint.pose.rotation.z = host_joint.pose.rotation.z;
+    guest_joint.pose.rotation.w = host_joint.pose.rotation.w;
+    guest_joint.pose.scale.x = host_joint.pose.scale.x;
+    guest_joint.pose.scale.y = host_joint.pose.scale.y;
+    guest_joint.pose.scale.z = host_joint.pose.scale.z;
+    guest_joint.pose.scale.w = 1.f;
   }
 
   return true;
 }
 
-std::shared_ptr<Model> LoadModelAsset(AssetPack* asset_pack,
-                                      const X_AVATAR_COMPONENT_INFO& info,
-                                      ModelLoadOptions model_load_options) {
+static std::shared_ptr<Model> LoadModelAsset(
+    AssetPack* asset_pack, const X_AVATAR_COMPONENT_INFO& info,
+    ModelLoadOptions model_load_options) {
   const uint8_t* strb_buffer;
   size_t strb_size;
   std::vector<uint8_t> strb_bytes;
@@ -670,7 +614,7 @@ std::shared_ptr<Model> LoadModelAsset(AssetPack* asset_pack,
   return Model::Load(strb_buffer, strb_size, model_load_options);
 }
 
-std::shared_ptr<Texture> LoadTextureAsset(
+static std::shared_ptr<Texture> LoadTextureAsset(
     AssetPack* asset_pack, const X_AVATAR_METADATA_TEXTURE& info) {
   const uint8_t* strb_buffer;
   size_t strb_size;
@@ -752,7 +696,8 @@ static void GetShaderOverrides(
 bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
                        uint32_t category_mask, uint32_t flags,
                        AssetPack* asset_pack, MemoryBlock* cpu_memory,
-                       MemoryBlock* gpu_memory, uint32_t coordinate_system) {
+                       MemoryBlock* gpu_memory, uint32_t skeleton_version,
+                       uint32_t coordinate_system) {
   category_mask &= ~ComponentCategory::kProp;
 
   SkeletonLoadOptions skeleton_load_options = SkeletonLoadOption::kNone;
@@ -762,15 +707,22 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
     model_load_options |= ModelLoadOption::kInvert;
   }
 
-  std::shared_ptr<Skeleton> xskeleton;
-  if (metadata.version == 0) {
-    xskeleton = Skeleton::Read(skeleton_nxe, countof(skeleton_nxe),
-                               skeleton_load_options);
-  } else if (metadata.version == 1) {
-    xskeleton = Skeleton::Read(skeleton_kinect, countof(skeleton_kinect),
-                               skeleton_load_options);
+  BodyType bodyType = GetBodyType(metadata);
+
+  std::shared_ptr<Skeleton> skeleton;
+
+  if (skeleton_version == 1) {
+    skeleton = Skeleton::Read(skeleton_nxe, countof(skeleton_nxe),
+                              skeleton_load_options);
+    ApplyScalesToSkeletonV1(bodyType, metadata.weight_factor,
+                            metadata.height_factor, skeleton);
+  } else if (skeleton_version == 2) {
+    skeleton = Skeleton::Read(skeleton_kinect, countof(skeleton_kinect),
+                              skeleton_load_options);
+    ApplyScalesToSkeletonV2(bodyType, metadata.weight_factor,
+                            metadata.height_factor, skeleton);
   } else {
-    XELOGW("Unknown avatar version {}!", metadata.version.get());
+    XELOGW("Unknown avatar skeleton version {}!", skeleton_version);
     return false;
   }
 
@@ -841,7 +793,7 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
   auto guest_skeleton =
       cpu_memory->Claim<X_AVATAR_SKELETON>(&guest_skeleton_ptr);
 
-  if (!SkeletonToGuest(guest_skeleton, xskeleton, cpu_memory)) {
+  if (!SkeletonToGuest(guest_skeleton, skeleton, cpu_memory)) {
     return false;
   }
 

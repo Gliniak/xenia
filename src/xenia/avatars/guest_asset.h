@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2022 Ben Vanik. All rights reserved.                             *
+ * Copyright 2026 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -26,6 +26,7 @@ namespace xe {
 namespace avatars {
 
 enum class BodyType : uint32_t {
+  kUnknown = 0,
   kMale = 1,
   kFemale = 2,
 };

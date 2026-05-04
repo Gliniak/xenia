@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2022 Ben Vanik. All rights reserved.                             *
+ * Copyright 2026 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -22,10 +22,23 @@ namespace avatars {
 
 class BitStream;
 
-struct Joint {
-  uint8_t parent_index;
+struct JointBindPose {
   Vector3<float> position;
   Quaternion<float> rotation;
+};
+
+struct JointPose {
+  Vector3<float> position;
+  Quaternion<float> rotation;
+  Vector3<float> scale;
+};
+
+struct Joint {
+  uint8_t parent_index;
+  uint8_t first_child_index;
+  uint8_t next_index;
+  JointBindPose bindpose;
+  JointPose pose;
 };
 
 struct JointSerializer {
@@ -54,8 +67,8 @@ struct JointSerializer {
   Joint Read(BitStream& stream) const {
     Joint instance;
     instance.parent_index = stream.Read<uint8_t>();
-    instance.position = position_serializer.Read(stream);
-    instance.rotation = rotation_serializer.Read(stream);
+    instance.bindpose.position = position_serializer.Read(stream);
+    instance.bindpose.rotation = rotation_serializer.Read(stream);
     return instance;
   }
 };
@@ -76,17 +89,20 @@ class Skeleton {
  public:
   std::vector<Joint> joints;
 
+ private:
+  void Initialize();
+
  public:
+  static std::shared_ptr<Skeleton> Load(const uint8_t* strb_buffer,
+                                        size_t strb_size,
+                                        SkeletonLoadOptions load_options);
+
   static std::shared_ptr<Skeleton> Read(const uint8_t* data_buffer,
                                         size_t data_size,
                                         SkeletonLoadOptions load_options);
-
-  static std::shared_ptr<Skeleton> ReadFromStrb(
-      const uint8_t* strb_buffer, size_t strb_size,
-      SkeletonLoadOptions load_options);
 };
 
 }  // namespace avatars
 }  // namespace xe
 
-#endif  // XENIA_AVATARS_ANIMATION_H_
+#endif  // XENIA_AVATARS_SKELETON_H_
