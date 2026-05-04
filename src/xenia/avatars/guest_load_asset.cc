@@ -751,6 +751,8 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
       source_components.push_back({source_info, model});
       continue;
     }
+    XELOGE("Failed to load avatar asset {}, looking for fallback...",
+           source_info.asset_id.to_string());
     X_AVATAR_COMPONENT_INFO fallback_info;
     for (const auto& candidate_info : metadata.fallback_components) {
       if (candidate_info.categories == source_info.categories) {
@@ -761,8 +763,8 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
       }
     }
     if (model == nullptr) {
-      XELOGE("Failed to load avatar asset {}!",
-             source_info.asset_id.to_string());
+      XELOGE("Failed to load fallback avatar asset {}!",
+             fallback_info.asset_id.to_string());
       component_failures++;
       continue;
     }
