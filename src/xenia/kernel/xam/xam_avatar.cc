@@ -24,67 +24,57 @@ namespace xam {
 
 using namespace xe::avatars;
 
-static const uint8_t gibbed_avatar[1000] = {};
-
-// TODO(gibbed): make this a generic function somewhere?
-bool LoadFile(KernelState* kernel_state, std::string path,
-              std::vector<uint8_t>& buffer) {
-  bool was_loaded = false;
-  auto fs_entry = kernel_state->file_system()->ResolvePath(path);
-  if (fs_entry) {
-    buffer.resize(fs_entry->size());
-    vfs::File* file = nullptr;
-    X_RESULT result = fs_entry->Open(vfs::FileAccess::kGenericRead, &file);
-    if (XSUCCEEDED(result)) {
-      size_t bytes_read = 0;
-      result = file->ReadSync({buffer.data(), buffer.size()}, 0, &bytes_read);
-      if (XSUCCEEDED(result)) {
-        buffer.resize(bytes_read);
-        was_loaded = true;
-      }
-      file->Destroy();
-    }
-  }
-  return was_loaded;
-}
-
 bool LoadAvatarAssetPack(KernelState* kernel_state) {
   bool is_loaded = kernel_state->avatar_asset_pack()->is_loaded();
   bool legacy_is_loaded = kernel_state->legacy_avatar_asset_pack()->is_loaded();
-  if (!is_loaded || !legacy_is_loaded) {
-    auto content_manager = kernel_state->content_manager();
-    XCONTENT_AGGREGATE_DATA content_data = {};
-    content_data.title_id = 0xFFFE07DF;
-    content_data.content_type = XContentType::kSUStoragePack;
-    content_data.set_file_name("AvatarAssetPack");
-    uint32_t loicense = 0;
-    X_RESULT result = content_manager->OpenContent("AvatarAssetPack", 0,
-                                                   content_data, loicense);
-    if (XSUCCEEDED(result)) {
+
+  if (is_loaded && legacy_is_loaded) {
+    return true;
+  }
+
+  auto content_manager = kernel_state->content_manager();
+  XCONTENT_AGGREGATE_DATA content_data = {};
+  content_data.title_id = kSystemDataID;
+  content_data.content_type = XContentType::kSUStoragePack;
+  content_data.set_file_name("FFFE07DF00000002");
+  uint32_t license = 0;
+  if (content_manager->OpenContent("AvatarAssetPack", 0, content_data,
+                                   license) == X_ERROR_SUCCESS) {
+    auto load_asset_pack = [&](std::string_view path) -> std::vector<uint8_t> {
+      vfs::File* file;
+      vfs::FileAction file_action;
+      X_STATUS result = kernel_state->file_system()->OpenFile(
+          nullptr, path, vfs::FileDisposition::kOpen,
+          vfs::FileAccess::kGenericRead, false, true, &file, &file_action);
+      if (result != X_STATUS_SUCCESS) {
+        return {};
+      }
+      std::vector<uint8_t> data(file->entry()->size());
+      size_t read_bytes = 0;
+      file->ReadSync(std::span<uint8_t>(data.data(), file->entry()->size()), 0,
+                     &read_bytes);
+      file->Destroy();
+      return data;
+    };
+
+    // Find and load AvatarAssetPack.toc
+    auto data = load_asset_pack("AvatarAssetPack:\\AvatarAssetPack.toc");
+    if (!data.empty()) {
+      is_loaded = kernel_state->avatar_asset_pack()->Load(data);
       if (!is_loaded) {
-        std::vector<uint8_t> data_bytes;
-        if (LoadFile(kernel_state, "AvatarAssetPack:\\AvatarAssetPack.toc",
-                     data_bytes)) {
-          is_loaded = kernel_state->avatar_asset_pack()->Load(data_bytes);
-        }
-        if (!is_loaded) {
-          XELOGW("Failed to load avatar asset pack!");
-        }
+        XELOGW("Failed to load avatar asset pack!");
       }
-      if (!legacy_is_loaded) {
-        std::vector<uint8_t> data_bytes;
-        if (LoadFile(kernel_state,
-                     "AvatarAssetPack:\\AvatarAssetPackLegacyV1.toc",
-                     data_bytes)) {
-          legacy_is_loaded =
-              kernel_state->legacy_avatar_asset_pack()->Load(data_bytes);
-        }
-        if (!legacy_is_loaded) {
-          XELOGW("Failed to load legacy avatar asset pack!");
-        }
-      }
-      content_manager->CloseContent("AvatarAssetPack");
     }
+
+    // Find and load AvatarAssetPackLegacyV1.toc
+    data = load_asset_pack("AvatarAssetPack:\\AvatarAssetPackLegacyV1.toc");
+    if (!data.empty()) {
+      legacy_is_loaded = kernel_state->legacy_avatar_asset_pack()->Load(data);
+      if (!legacy_is_loaded) {
+        XELOGW("Failed to load legacy avatar asset pack!");
+      }
+    }
+    content_manager->CloseContent("AvatarAssetPack");
   }
   return is_loaded && legacy_is_loaded;
 }
@@ -412,13 +402,6 @@ DECLARE_XAM_EXPORT1(XamAvatarGetAssetIcon, kAvatars, kStub);
 dword_result_t XamPngDecode_entry(lpdword_t png_data, dword_t size,
                                   lpdword_t buffer, dword_t flags, dword_t r7,
                                   dword_t r8, dword_t r9) {
-  // auto kek =
-  //     fopen(fmt::format("{:08X}.png", buffer.guest_address()).c_str(), "wb");
-  // fwrite(png_data, 1, size, kek);
-
-  // fclose(kek);
-
-  // memset(buffer, 0x35, size);
   return X_ERROR_SUCCESS;
 }
 DECLARE_XAM_EXPORT1(XamPngDecode, kAvatars, kStub);

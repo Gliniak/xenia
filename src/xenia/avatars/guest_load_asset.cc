@@ -787,6 +787,7 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
   }
 
   auto assets = cpu_memory->Claim<X_AVATAR_ASSETS>();
+  assets->prop_ptr = 0;
   //*assets = {};
 
   uint32_t guest_skeleton_ptr;
