@@ -13,8 +13,6 @@
 #include "xenia/avatars/skeleton.h"
 #include "xenia/base/math.h"
 
-#include <DirectXMath.h>
-
 namespace xe {
 namespace avatars {
 

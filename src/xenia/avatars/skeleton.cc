@@ -18,7 +18,7 @@
 #include "xenia/base/math.h"
 #include "xenia/kernel/kernel_state.h"
 
-#include <DirectXMath.h>
+#include "third_party/glm/glm/gtc/quaternion.hpp"
 
 namespace xe {
 namespace avatars {
@@ -43,34 +43,37 @@ void Skeleton::Initialize() {
     auto& joint = joints[i];
     const auto& parentJoint = joints[joint.parent_index];
 
-    auto matrixA = DirectX::XMMatrixRotationQuaternion(DirectX::XMVectorSet(
-        joint.bindpose.rotation.x, joint.bindpose.rotation.y,
-        joint.bindpose.rotation.z, 1.f));
-    matrixA.r[3] = DirectX::XMVectorSet(joint.bindpose.position.x,
-                                        joint.bindpose.position.y,
-                                        joint.bindpose.position.z, 1.f);
+    const glm::quat q(joint.bindpose.rotation.w, joint.bindpose.rotation.x,
+                      joint.bindpose.rotation.y, joint.bindpose.rotation.z);
+    glm::mat4 matrixA = glm::mat4_cast(q);
 
-    auto matrix = DirectX::XMMatrixRotationQuaternion(DirectX::XMVectorSet(
-        parentJoint.bindpose.rotation.x, parentJoint.bindpose.rotation.y,
-        parentJoint.bindpose.rotation.z, 1.f));
-    matrix.r[3] = DirectX::XMVectorSet(parentJoint.bindpose.position.x,
-                                       parentJoint.bindpose.position.y,
-                                       parentJoint.bindpose.position.z, 1.f);
+    matrixA[3] = glm::vec4(joint.bindpose.position.x, joint.bindpose.position.y,
+                           joint.bindpose.position.z, 1.f);
 
-    auto matrixB = DirectX::XMMatrixInverse(nullptr, matrix);
-    auto matrix2 = DirectX::XMMatrixMultiply(matrixA, matrixB);
+    const glm::quat parentQ(1.f, parentJoint.bindpose.rotation.x,
+                            parentJoint.bindpose.rotation.y,
+                            parentJoint.bindpose.rotation.z);
+    glm::mat4 matrix = glm::mat4_cast(parentQ);
+    matrix[3] = glm::vec4(parentJoint.bindpose.position.x,
+                          parentJoint.bindpose.position.y,
+                          parentJoint.bindpose.position.z, 1.f);
 
-    auto position = matrix2.r[3];
-    auto rotation = DirectX::XMQuaternionRotationMatrix(matrix2);
+    const glm::mat4 matrixB = glm::inverse(matrix);
 
-    joint.pose.position.x = position.m128_f32[0];
-    joint.pose.position.y = position.m128_f32[1];
-    joint.pose.position.z = position.m128_f32[2];
-    // joint.pose.position.w = position.m128_f32[3];
-    joint.pose.rotation.x = rotation.m128_f32[0];
-    joint.pose.rotation.y = rotation.m128_f32[1];
-    joint.pose.rotation.z = rotation.m128_f32[2];
-    joint.pose.rotation.w = rotation.m128_f32[3];
+    const glm::mat4 matrix2 = matrixB * matrixA;
+
+    const glm::vec4 position = matrix2[3];
+
+    const glm::quat rotation = glm::quat_cast(matrix2);
+
+    joint.pose.position.x = position.x;
+    joint.pose.position.y = position.y;
+    joint.pose.position.z = position.z;
+
+    joint.pose.rotation.x = rotation.x;
+    joint.pose.rotation.y = rotation.y;
+    joint.pose.rotation.z = rotation.z;
+    joint.pose.rotation.w = rotation.w;
   }
 
   {

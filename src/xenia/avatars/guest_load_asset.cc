@@ -24,8 +24,6 @@
 #include "xenia/base/logging.h"
 #include "xenia/kernel/kernel_state.h"
 
-//#include <DirectXMath.h>
-
 namespace xe {
 namespace avatars {
 
@@ -791,8 +789,7 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
   }
 
   auto assets = cpu_memory->Claim<X_AVATAR_ASSETS>();
-  assets->prop_ptr = 0;
-  //*assets = {};
+  *assets = {};
 
   uint32_t guest_skeleton_ptr;
   auto guest_skeleton =
