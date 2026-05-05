@@ -10,6 +10,7 @@
 #ifndef XENIA_AVATARS_SERIALIZERS_H_
 #define XENIA_AVATARS_SERIALIZERS_H_
 
+#include <cmath>
 #include <memory>
 #include <vector>
 

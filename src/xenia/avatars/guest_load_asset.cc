@@ -24,7 +24,7 @@
 #include "xenia/base/logging.h"
 #include "xenia/kernel/kernel_state.h"
 
-#include <DirectXMath.h>
+//#include <DirectXMath.h>
 
 namespace xe {
 namespace avatars {
