@@ -366,7 +366,7 @@ static bool TriangleBatchToGuest(
   }
 
   guest.triangle_count = host.triangle_count;
-  guest.vertex_count = host.vertex_count;
+  guest.vertex_count = static_cast<uint32_t>(host.vertices.size());
   guest.uv_count = host.uv_count;
   guest.vertex_size = host.vertex_size;
   guest.index_size = host.index_size;

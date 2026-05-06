@@ -76,7 +76,6 @@ struct TriangleBatch {
   uint32_t shader_id;
   std::vector<ShaderParameter> shader_parameters;
   uint32_t triangle_count;
-  uint32_t vertex_count;
   uint32_t uv_count;
   uint32_t vertex_size;
   uint32_t index_size;
