@@ -289,14 +289,26 @@ dword_result_t XamAvatarGetAssets_entry(
 DECLARE_XAM_EXPORT1(XamAvatarGetAssets, kAvatars, kStub);
 
 dword_result_t XamAvatarLoadAnimation_entry(
-    pointer_t<AssetId> asset_id, dword_t flags, lpvoid_t animation_ptr,
+    pointer_t<AssetId> asset_id, dword_t flags,
+    pointer_t<X_AVATAR_ANIMATION> animation,
     pointer_t<XAM_OVERLAPPED> overlapped) {
   XELOGD("Request to load avatar animation {}: {}", asset_id->to_string(),
          to_utf8(kernel_state()->avatar_asset_pack()->GetAssetName(*asset_id)));
-  auto run = [asset_id = *asset_id, animation_ptr](
+  auto run = [asset_id = *asset_id, animation](
                  uint32_t& length, uint32_t& extended_error) -> X_RESULT {
-    if (!avatars::LoadAnimationToGuest(asset_id, animation_ptr,
-                                       gCoordinateSystem, kernel_state())) {
+    assert_true(gTitleVersion > 0);
+    AssetPack* asset_pack;
+    if (gTitleVersion >= 3) {
+      asset_pack = kernel_state()->avatar_asset_pack();
+    } else {
+      asset_pack = kernel_state()->legacy_avatar_asset_pack();
+    }
+    auto compressed_data_buffer_ptr =
+        kernel_state()->memory()->TranslateVirtual(
+            animation->compressed_data_buffer_ptr);
+    if (!avatars::LoadAnimationToGuest(asset_pack, asset_id, animation,
+                                       compressed_data_buffer_ptr,
+                                       gCoordinateSystem)) {
       XELOGD("Failed to load animation!");
       length = 0;
       extended_error = X_E_FAIL;

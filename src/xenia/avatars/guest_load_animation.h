@@ -14,26 +14,29 @@
 
 #include "xenia/avatars/animation.h"
 #include "xenia/avatars/asset_pack.h"
+#include "xenia/avatars/guest_animation.h"
 #include "xenia/avatars/guest_asset.h"
 #include "xenia/base/memory.h"
 
 namespace xe {
+
 namespace kernel {
 
 class KernelState;
 
-}
+}  // namespace kernel
 
 namespace avatars {
 
 bool LoadAnimationToGuest(const AssetId& asset_id,
                           std::shared_ptr<Animation> animation,
-                          void* guest_animation,
-                          kernel::KernelState* kernel_state);
+                          X_AVATAR_ANIMATION* guest_animation,
+                          uint8_t* guest_compressed_data);
 
-bool LoadAnimationToGuest(const AssetId& asset_id, void* animation,
-                          uint32_t coordinate_system,
-                          kernel::KernelState* kernel_state);
+bool LoadAnimationToGuest(AssetPack* asset_pack, const AssetId& asset_id,
+                          X_AVATAR_ANIMATION* guest_animation,
+                          uint8_t* guest_compressed_data,
+                          uint32_t coordinate_system);
 
 }  // namespace avatars
 }  // namespace xe

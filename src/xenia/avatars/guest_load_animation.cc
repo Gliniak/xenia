@@ -23,92 +23,6 @@
 namespace xe {
 namespace avatars {
 
-struct X_AVATAR_VECTOR_SERIALIZER {
-  be<float> quant_radius;
-  be<float> delta_x;
-  be<float> delta_y;
-  be<float> delta_z;
-  be<float> base_x;
-  be<float> base_y;
-  be<float> base_z;
-  uint8_t unknown[12];
-  be<uint32_t> bit_count_x;
-  be<uint32_t> bit_count_y;
-  be<uint32_t> bit_count_z;
-};
-static_assert_size(X_AVATAR_VECTOR_SERIALIZER, 0x34);
-
-struct X_AVATAR_QUATERNION_SERIALIZER {
-  X_AVATAR_VECTOR_SERIALIZER base_serializer;
-};
-static_assert_size(X_AVATAR_QUATERNION_SERIALIZER, 0x34);
-
-struct X_AVATAR_DWORD_SERIALIZER {
-  be<uint32_t> bit_count;
-  be<uint32_t> base_value;
-  uint8_t unknown[4];
-};
-static_assert_size(X_AVATAR_DWORD_SERIALIZER, 0xC);
-
-struct X_AVATAR_JOINT_SERIALIZER {
-  X_AVATAR_VECTOR_SERIALIZER position_serializer;
-  X_AVATAR_QUATERNION_SERIALIZER rotation_serializer;
-  X_AVATAR_VECTOR_SERIALIZER scale_serializer;
-};
-static_assert_size(X_AVATAR_JOINT_SERIALIZER, 0x9C);
-
-struct X_AVATAR_MOTION_SERIALIZER {
-  X_AVATAR_VECTOR_SERIALIZER position_serializer;
-  X_AVATAR_QUATERNION_SERIALIZER rotation_serializer;
-};
-static_assert_size(X_AVATAR_MOTION_SERIALIZER, 0x68);
-
-struct X_AVATAR_TEXTURE_SERIALIZER {
-  X_AVATAR_DWORD_SERIALIZER layer_index_serializer;
-};
-static_assert_size(X_AVATAR_TEXTURE_SERIALIZER, 0xC);
-
-struct X_AVATAR_POSE_FRAME_SET {
-  be<uint32_t> frame_count;
-  be<uint32_t> element_count;
-  be<uint32_t> frame_bit_count;
-  X_AVATAR_JOINT_SERIALIZER element_serializers[72];
-};
-static_assert_size(X_AVATAR_POSE_FRAME_SET, 0x2BEC);
-
-struct X_AVATAR_MOTION_FRAME_SET {
-  be<uint32_t> frame_count;
-  be<uint32_t> element_count;
-  be<uint32_t> frame_bit_count;
-  X_AVATAR_MOTION_SERIALIZER element_serializers[3];
-};
-static_assert_size(X_AVATAR_MOTION_FRAME_SET, 0x144);
-
-struct X_AVATAR_TEXTURE_FRAME_SET {
-  be<uint32_t> frame_count;
-  be<uint32_t> element_count;
-  be<uint32_t> frame_bit_count;
-  X_AVATAR_TEXTURE_SERIALIZER element_serializers[5];
-};
-static_assert_size(X_AVATAR_TEXTURE_FRAME_SET, 0x48);
-
-struct X_AVATAR_ANIMATION {
-  X_AVATAR_POSE_FRAME_SET pose_frame_sets[2];
-  X_AVATAR_MOTION_FRAME_SET motion_frame_set;
-  X_AVATAR_TEXTURE_FRAME_SET texture_frame_set;
-  be<uint32_t> frame_count;
-  be<float> frames_per_second;
-  be<uint32_t> pose_counts[2];
-  be<uint32_t> motion_count;
-  be<uint32_t> texture_count;
-  be<uint32_t> pose_2_offset;
-  be<uint32_t> motions_offset;
-  be<uint32_t> textures_offset;
-  be<uint32_t> compressed_data_size;
-  be<uint32_t> compressed_data_buffer_ptr;
-};
-static_assert_size(X_AVATAR_ANIMATION, 0x5990);
-
 static void VectorSerializerToGuest(
     const VectorSerializer& host_serializer,
     X_AVATAR_VECTOR_SERIALIZER& guest_serializer) {
@@ -196,10 +110,10 @@ static void TextureFrameSetToGuest(const Animation::TextureFrameSet& host,
   }
 }
 
-static bool LoadAnimationToGuest(const AssetId& asset_id,
-                                 std::shared_ptr<Animation> animation,
-                                 X_AVATAR_ANIMATION* guest_animation,
-                                 kernel::KernelState* kernel_state) {
+bool LoadAnimationToGuest(const AssetId& asset_id,
+                          std::shared_ptr<Animation> animation,
+                          X_AVATAR_ANIMATION* guest_animation,
+                          uint8_t* guest_compressed_buffer) {
   if (animation->compressed_data_bytes.size() >
       guest_animation->compressed_data_size) {
     XELOGE(
@@ -251,22 +165,19 @@ static bool LoadAnimationToGuest(const AssetId& asset_id,
   guest_animation->compressed_data_size =
       static_cast<uint32_t>(animation->compressed_data_bytes.size());
 
-  auto guest_compressed_buffer = kernel_state->memory()->TranslateVirtual(
-      guest_animation->compressed_data_buffer_ptr);
   std::memcpy(guest_compressed_buffer, animation->compressed_data_bytes.data(),
               guest_animation->compressed_data_size);
 
   return true;
 }
 
-static bool LoadAnimationToGuest(const AssetId& asset_id,
-                                 X_AVATAR_ANIMATION* guest_animation,
-                                 uint32_t coordinate_system,
-                                 kernel::KernelState* kernel_state) {
+bool LoadAnimationToGuest(AssetPack* asset_pack, const AssetId& asset_id,
+                          X_AVATAR_ANIMATION* guest_animation,
+                          uint8_t* guest_compressed_data,
+                          uint32_t coordinate_system) {
   const uint8_t* strb_buffer;
   size_t strb_size;
-  if (!kernel_state->avatar_asset_pack()->GetAssetData(asset_id, strb_buffer,
-                                                       strb_size)) {
+  if (!asset_pack->GetAssetData(asset_id, strb_buffer, strb_size)) {
     XELOGE("Failed to find avatar animation {}!", asset_id.to_string());
     return false;
   }
@@ -283,24 +194,7 @@ static bool LoadAnimationToGuest(const AssetId& asset_id,
   }
 
   return LoadAnimationToGuest(asset_id, animation, guest_animation,
-                              kernel_state);
-}
-
-bool LoadAnimationToGuest(const AssetId& asset_id,
-                          std::shared_ptr<Animation> animation,
-                          void* guest_animation,
-                          kernel::KernelState* kernel_state) {
-  return LoadAnimationToGuest(asset_id, animation,
-                              static_cast<X_AVATAR_ANIMATION*>(guest_animation),
-                              kernel_state);
-}
-
-bool LoadAnimationToGuest(const AssetId& asset_id, void* guest_animation,
-                          uint32_t coordinate_system,
-                          kernel::KernelState* kernel_state) {
-  return LoadAnimationToGuest(asset_id,
-                              static_cast<X_AVATAR_ANIMATION*>(guest_animation),
-                              coordinate_system, kernel_state);
+                              guest_compressed_data);
 }
 
 }  // namespace avatars

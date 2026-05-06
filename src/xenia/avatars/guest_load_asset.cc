@@ -10,15 +10,19 @@
 #include <filesystem>
 #include <stack>
 
+#include "xenia/avatars/guest_load_asset.h"
+
 #include "xenia/avatars/asset_pack.h"
 #include "xenia/avatars/blend_shape.h"
 #include "xenia/avatars/blend_shape_apply.h"
 #include "xenia/avatars/compression.h"
+#include "xenia/avatars/guest_animation.h"
 #include "xenia/avatars/guest_asset.h"
-#include "xenia/avatars/guest_load_asset.h"
+#include "xenia/avatars/guest_load_animation.h"
 #include "xenia/avatars/memory_block.h"
 #include "xenia/avatars/model.h"
 #include "xenia/avatars/model_save.h"
+#include "xenia/avatars/prop.h"
 #include "xenia/avatars/skeleton.h"
 #include "xenia/avatars/skeleton_data.h"
 #include "xenia/avatars/skeleton_scaling.h"
@@ -467,6 +471,8 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
                        AssetPack* asset_pack, MemoryBlock* cpu_memory,
                        MemoryBlock* gpu_memory, uint32_t skeleton_version,
                        uint32_t coordinate_system) {
+  bool want_prop = !!(category_mask & ComponentCategory::kProp);
+
   category_mask &= ~ComponentCategory::kProp;
 
   BlendShapeLoadOptions blend_shape_load_options = BlendShapeLoadOption::kNone;
@@ -478,7 +484,7 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
     model_load_options |= ModelLoadOption::kInvert;
   }
 
-  BodyType bodyType = GetBodyType(metadata);
+  BodyType body_type = GetBodyType(metadata);
 
   auto skeleton = LoadSkeleton(skeleton_version, skeleton_load_options);
   if (skeleton == nullptr) {
@@ -487,10 +493,10 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
   }
 
   if (skeleton_version == 1) {
-    ApplyScalesToSkeletonV1(bodyType, metadata.weight_factor,
+    ApplyScalesToSkeletonV1(body_type, metadata.weight_factor,
                             metadata.height_factor, skeleton);
   } else if (skeleton_version == 2) {
-    ApplyScalesToSkeletonV2(bodyType, metadata.weight_factor,
+    ApplyScalesToSkeletonV2(body_type, metadata.weight_factor,
                             metadata.height_factor, skeleton);
   } else {
     XELOGW("Unknown avatar skeleton version {}!", skeleton_version);
@@ -595,6 +601,30 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
     }
   }
 
+  std::shared_ptr<Prop> prop = nullptr;
+  X_AVATAR_COMPONENT_INFO prop_info{};
+  if (want_prop) {
+    for (const auto& component : metadata.components) {
+      if (component.matches(ComponentCategory::kProp)) {
+        prop_info = component;
+        break;
+      }
+    }
+    if (!prop_info.asset_id.is_zero()) {
+      PropLoadOptions prop_load_options{};
+      prop_load_options.model = model_load_options;
+      prop_load_options.skeleton = skeleton_load_options;
+      prop_load_options.animation = AnimationLoadOption::kGuest;
+      prop_load_options.blend_shape = blend_shape_load_options;
+      if (coordinate_system == 0) {
+        prop_load_options.animation |= AnimationLoadOption::kInvert;
+      }
+      prop_load_options.model = model_load_options;
+      prop = LoadAsset<Prop, PropLoadOptions>(asset_pack, prop_info.asset_id,
+                                              prop_load_options);
+    }
+  }
+
   auto assets = cpu_memory->Claim<X_AVATAR_ASSETS>();
   *assets = {};
 
@@ -638,6 +668,56 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
     }
   } else {
     assets->component_count = 0;
+  }
+
+  if (prop != nullptr) {
+    uint32_t guest_prop_ptr;
+    auto guest_prop = cpu_memory->Claim<X_AVATAR_PROP>(&guest_prop_ptr);
+
+    *guest_prop = {};
+    guest_prop->component_info = prop_info;
+
+    uint32_t guest_prop_skeleton_ptr;
+    auto guest_prop_skeleton =
+        cpu_memory->Claim<X_AVATAR_SKELETON>(&guest_prop_skeleton_ptr);
+
+    if (!SkeletonToGuest(guest_prop_skeleton, prop->skeleton, cpu_memory)) {
+      return false;
+    }
+
+    cpu_memory->SetPointer(&guest_prop->skeleton_ptr, guest_prop_skeleton_ptr);
+
+    if (!ModelToGuest(prop->model, &guest_prop->component_model, cpu_memory,
+                      gpu_memory, prop_info.categories, {}, {})) {
+      return false;
+    }
+
+    if (prop->animation != nullptr) {
+      uint32_t guest_animation_ptr;
+      auto guest_animation =
+          cpu_memory->Claim<X_AVATAR_ANIMATION>(&guest_animation_ptr);
+
+      guest_animation->compressed_data_size =
+          static_cast<uint32_t>(prop->animation->compressed_data_bytes.size());
+
+      uint32_t guest_compressed_data_buffer_ptr;
+      auto guest_compressed_data_buffer =
+          cpu_memory->ClaimBytes(&guest_compressed_data_buffer_ptr,
+                                 guest_animation->compressed_data_size);
+
+      if (!LoadAnimationToGuest(prop_info.asset_id, prop->animation,
+                                guest_animation,
+                                guest_compressed_data_buffer)) {
+        return false;
+      }
+
+      cpu_memory->SetPointer(&guest_animation->compressed_data_buffer_ptr,
+                             guest_compressed_data_buffer_ptr);
+
+      cpu_memory->SetPointer(&guest_prop->animation_ptr, guest_animation_ptr);
+    }
+
+    cpu_memory->SetPointer(&assets->prop_ptr, guest_prop_ptr);
   }
 
   return true;

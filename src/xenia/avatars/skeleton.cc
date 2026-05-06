@@ -60,9 +60,9 @@ void Skeleton::Initialize() {
 
   assert_true(joints.size() < 255);
 
-  uint8_t jointCount = static_cast<uint8_t>(joints.size());
+  uint8_t joint_count = static_cast<uint8_t>(joints.size());
 
-  for (uint8_t i = 0; i < jointCount; ++i) {
+  for (uint8_t i = 0; i < joint_count; ++i) {
     auto& joint = joints[i];
     joint.first_child_index = InvalidIndex;
     joint.next_index = InvalidIndex;
@@ -71,7 +71,7 @@ void Skeleton::Initialize() {
     joint.pose.scale = {1.0f, 1.0f, 1.0f};
   }
 
-  for (uint8_t i = jointCount - 1; i >= 1; --i) {
+  for (uint8_t i = joint_count - 1; i >= 1; --i) {
     auto& joint = joints[i];
     const auto& parentJoint = joints[joint.parent_index];
 
@@ -115,29 +115,29 @@ void Skeleton::Initialize() {
     joint.pose.rotation = joint.bindpose.rotation;
   }
 
-  for (uint8_t parentIndex = 0; parentIndex < jointCount; ++parentIndex) {
-    uint8_t firstChildIndex = InvalidIndex;
-    for (uint8_t childIndex = 0; childIndex < jointCount; ++childIndex) {
-      if (joints[childIndex].parent_index == parentIndex) {
-        firstChildIndex = childIndex;
+  for (uint8_t parent_index = 0; parent_index < joint_count; ++parent_index) {
+    uint8_t first_child_index = InvalidIndex;
+    for (uint8_t child_index = 0; child_index < joint_count; ++child_index) {
+      if (joints[child_index].parent_index == parent_index) {
+        first_child_index = child_index;
         break;
       }
     }
 
     // didn't find any children
-    if (firstChildIndex == InvalidIndex) {
+    if (first_child_index == InvalidIndex) {
       continue;
     }
 
-    joints[parentIndex].first_child_index = firstChildIndex;
+    joints[parent_index].first_child_index = first_child_index;
 
     // find next
-    uint8_t prevIndex = firstChildIndex;
-    for (uint8_t nextIndex = firstChildIndex + 1; nextIndex < jointCount;
-         ++nextIndex) {
-      if (joints[nextIndex].parent_index == parentIndex) {
-        joints[prevIndex].next_index = nextIndex;
-        prevIndex = nextIndex;
+    uint8_t prev_index = first_child_index;
+    for (uint8_t next_index = first_child_index + 1; next_index < joint_count;
+         ++next_index) {
+      if (joints[next_index].parent_index == parent_index) {
+        joints[prev_index].next_index = next_index;
+        prev_index = next_index;
       }
     }
   }
@@ -173,13 +173,30 @@ std::shared_ptr<Skeleton> Skeleton::Read(const uint8_t* data_buffer,
 std::shared_ptr<Skeleton> Skeleton::Load(const uint8_t* strb_buffer,
                                          size_t strb_size,
                                          SkeletonLoadOptions load_options) {
-  const uint8_t* data_buffer;
-  size_t data_size;
+  const uint8_t* compressed_buffer;
+  size_t compressed_size;
   if (!strb::GetSTRBBlock(strb_buffer, strb_size, strb::STRBBlockId::kSkeleton,
-                          data_buffer, data_size)) {
+                          compressed_buffer, compressed_size)) {
     return nullptr;
   }
-  return Read(data_buffer, data_size, load_options);
+
+  size_t data_size;
+  if (!compression::GetUncompressedSize(compressed_buffer, compressed_size,
+                                        data_size)) {
+    assert_always();
+    XELOGE("Failed to get uncompressed size for avatar skeleton!");
+    return nullptr;
+  }
+
+  std::vector<uint8_t> data_bytes(data_size);
+  if (!compression::Decompress(compressed_buffer, compressed_size,
+                               data_bytes.data(), data_size)) {
+    assert_always();
+    XELOGE("Failed to decompress avatar skeleton!");
+    return nullptr;
+  }
+
+  return Read(data_bytes.data(), data_bytes.size(), load_options);
 }
 
 }  // namespace avatars
