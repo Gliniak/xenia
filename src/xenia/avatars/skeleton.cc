@@ -23,6 +23,38 @@
 namespace xe {
 namespace avatars {
 
+struct JointSerializer {
+ public:
+  VectorSerializer position_serializer;
+  QuaternionSerializer rotation_serializer;
+
+  size_t element_bit_size() const {
+    return 8 + position_serializer.element_bit_size() +
+           rotation_serializer.element_bit_size();
+  }
+
+ public:
+  static JointSerializer From(BitStream& stream) {
+    JointSerializer instance;
+    instance.position_serializer = VectorSerializer::From(stream);
+    instance.rotation_serializer = QuaternionSerializer::From(stream);
+    return instance;
+  }
+
+  void invert() {
+    position_serializer.invert();
+    rotation_serializer.invert();
+  }
+
+  Joint Read(BitStream& stream) const {
+    Joint instance;
+    instance.parent_index = stream.Read<uint8_t>();
+    instance.bindpose.position = position_serializer.Read(stream);
+    instance.bindpose.rotation = rotation_serializer.Read(stream);
+    return instance;
+  }
+};
+
 void Skeleton::Initialize() {
   const uint8_t InvalidIndex = 255;
 
