@@ -44,6 +44,21 @@ bool GetSTRBBlock(const uint8_t* strb_buffer, size_t strb_size,
                   STRBBlockId target_id, const uint8_t*& target_buffer,
                   size_t& target_size) {
   auto magic = *reinterpret_cast<const be<fourcc_t>*>(&strb_buffer[0]);
+  if (magic == make_fourcc("YTGR")) {
+    // skip verification signature
+    // TODO(gibbed): check header?
+    if (strb_size < 0x140) {
+      return false;
+    }
+    strb_buffer += 0x140;
+    strb_size -= 0x140;
+    magic = *reinterpret_cast<const be<fourcc_t>*>(&strb_buffer[0]);
+  }
+
+  if (strb_size < 24) {
+    return false;
+  }
+
   if (magic != make_fourcc("STRB")) {
     return false;
   }
