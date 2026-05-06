@@ -248,7 +248,7 @@ bool AssetPack::Load(std::vector<uint8_t>& data_bytes) {
       continue;
     }
 
-    XELOGI("whoa!! {}", asset_info.asset_ids[0].to_string());
+    // XELOGI("whoa!! {}", asset_info.asset_ids[0].to_string());
   }
 
   return true;
