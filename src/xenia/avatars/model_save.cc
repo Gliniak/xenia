@@ -40,6 +40,9 @@ void SaveModel(const X_AVATAR_COMPONENT_INFO& component_info,
                                 batch_index++);
     }
     FILE* output = fopen(output_name.c_str(), "wb");
+    if (output != nullptr) {
+      continue;
+    }
 
     for (const auto& vertex : triangle_batch.vertices) {
       auto vertex_line = fmt::format("v {} {} {}\r\n", vertex.position.x,
@@ -146,6 +149,9 @@ void SaveModel(const X_AVATAR_COMPONENT_INFO& component_info,
                                 asset_name, texture_index++, texture.format);
     }
     FILE* output = fopen(output_name.c_str(), "wb");
+    if (output == nullptr) {
+      continue;
+    }
     const char signature[4] = {'D', 'D', 'S', ' '};
     fwrite(&signature, sizeof(signature), 1, output);
     fwrite(&dds_header, sizeof(dds_header), 1, output);
