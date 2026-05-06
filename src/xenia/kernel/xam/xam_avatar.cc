@@ -295,8 +295,8 @@ dword_result_t XamAvatarLoadAnimation_entry(
          to_utf8(kernel_state()->avatar_asset_pack()->GetAssetName(*asset_id)));
   auto run = [asset_id = *asset_id, animation_ptr](
                  uint32_t& length, uint32_t& extended_error) -> X_RESULT {
-    if (!avatars::LoadAnimationToGuest(asset_id, kernel_state(), animation_ptr,
-                                       gCoordinateSystem)) {
+    if (!avatars::LoadAnimationToGuest(asset_id, animation_ptr,
+                                       gCoordinateSystem, kernel_state())) {
       XELOGD("Failed to load animation!");
       length = 0;
       extended_error = X_E_FAIL;

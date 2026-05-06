@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2022 Ben Vanik. All rights reserved.                             *
+ * Copyright 2026 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -109,8 +109,9 @@ struct X_AVATAR_ANIMATION {
 };
 static_assert_size(X_AVATAR_ANIMATION, 0x5990);
 
-void VectorSerializerToGuest(const VectorSerializer& host_serializer,
-                             X_AVATAR_VECTOR_SERIALIZER& guest_serializer) {
+static void VectorSerializerToGuest(
+    const VectorSerializer& host_serializer,
+    X_AVATAR_VECTOR_SERIALIZER& guest_serializer) {
   guest_serializer.quant_radius = host_serializer.quant_radius;
   guest_serializer.delta_x = host_serializer.delta_x;
   guest_serializer.delta_y = host_serializer.delta_y;
@@ -125,23 +126,25 @@ void VectorSerializerToGuest(const VectorSerializer& host_serializer,
   guest_serializer.bit_count_z = host_serializer.bit_count_z;
 }
 
-void QuaternionSerializerToGuest(
+static void QuaternionSerializerToGuest(
     const QuaternionSerializer& host_serializer,
     X_AVATAR_QUATERNION_SERIALIZER& guest_serializer) {
   VectorSerializerToGuest(host_serializer.base_serializer,
                           guest_serializer.base_serializer);
 }
 
-void DwordSerializerToGuest(const ValueSerializer<uint32_t>& host_serializer,
-                            X_AVATAR_DWORD_SERIALIZER& guest_serializer) {
+static void DwordSerializerToGuest(
+    const ValueSerializer<uint32_t>& host_serializer,
+    X_AVATAR_DWORD_SERIALIZER& guest_serializer) {
   guest_serializer.bit_count = host_serializer.bit_count;
   guest_serializer.base_value = host_serializer.base_value;
   // unknown[4]
   std::memset(guest_serializer.unknown, 0, sizeof(guest_serializer.unknown));
 }
 
-void PoseFrameSetToGuest(const Animation::PoseFrameSet& host,
-                         X_AVATAR_POSE_FRAME_SET& guest, size_t element_count) {
+static void PoseFrameSetToGuest(const Animation::PoseFrameSet& host,
+                                X_AVATAR_POSE_FRAME_SET& guest,
+                                size_t element_count) {
   guest.frame_count = static_cast<uint32_t>(host.frame_count);
   guest.element_count = static_cast<uint32_t>(element_count);
   guest.frame_bit_count = static_cast<uint32_t>(host.frame_bit_count);
@@ -159,9 +162,9 @@ void PoseFrameSetToGuest(const Animation::PoseFrameSet& host,
   }
 }
 
-void MotionFrameSetToGuest(const Animation::MotionFrameSet& host,
-                           X_AVATAR_MOTION_FRAME_SET& guest,
-                           size_t element_count) {
+static void MotionFrameSetToGuest(const Animation::MotionFrameSet& host,
+                                  X_AVATAR_MOTION_FRAME_SET& guest,
+                                  size_t element_count) {
   guest.frame_count = static_cast<uint32_t>(host.frame_count);
   guest.element_count = static_cast<uint32_t>(element_count);
   guest.frame_bit_count = static_cast<uint32_t>(host.frame_bit_count);
@@ -177,9 +180,9 @@ void MotionFrameSetToGuest(const Animation::MotionFrameSet& host,
   }
 }
 
-void TextureFrameSetToGuest(const Animation::TextureFrameSet& host,
-                            X_AVATAR_TEXTURE_FRAME_SET& guest,
-                            size_t element_count) {
+static void TextureFrameSetToGuest(const Animation::TextureFrameSet& host,
+                                   X_AVATAR_TEXTURE_FRAME_SET& guest,
+                                   size_t element_count) {
   guest.frame_count = static_cast<uint32_t>(host.frame_count);
   guest.element_count = static_cast<uint32_t>(element_count);
   guest.frame_bit_count = static_cast<uint32_t>(host.frame_bit_count);
@@ -193,36 +196,10 @@ void TextureFrameSetToGuest(const Animation::TextureFrameSet& host,
   }
 }
 
-bool LoadAnimationToGuest(const AssetId& asset_id,
-                          kernel::KernelState* kernel_state,
-                          X_AVATAR_ANIMATION* guest_animation,
-                          uint32_t coordinate_system) {
-  const uint8_t* strb_buffer;
-  size_t strb_size;
-  if (!kernel_state->avatar_asset_pack()->GetAssetData(asset_id, strb_buffer,
-                                                       strb_size)) {
-    XELOGE("Failed to find avatar animation {}!", asset_id.to_string());
-    return false;
-  }
-
-  /*
-  auto dump2_name = fmt::format("animation_{}.bin", asset_id.to_string());
-  auto dump2_handle = fopen(dump2_name.c_str(), "wb");
-  fwrite(strb_buffer, 1, strb_size, dump2_handle);
-  fclose(dump2_handle);
-  */
-
-  AnimationLoadOptions load_options = AnimationLoadOption::kGuest;
-  if (coordinate_system == 0) {
-    load_options |= AnimationLoadOption::kInvert;
-  }
-
-  auto animation = Animation::Load(strb_buffer, strb_size, load_options);
-  if (!animation) {
-    XELOGE("Failed to load avatar animation {}!", asset_id.to_string());
-    return false;
-  }
-
+static bool LoadAnimationToGuest(const AssetId& asset_id,
+                                 std::shared_ptr<Animation> animation,
+                                 X_AVATAR_ANIMATION* guest_animation,
+                                 kernel::KernelState* kernel_state) {
   if (animation->compressed_data_bytes.size() >
       guest_animation->compressed_data_size) {
     XELOGE(
@@ -279,22 +256,51 @@ bool LoadAnimationToGuest(const AssetId& asset_id,
   std::memcpy(guest_compressed_buffer, animation->compressed_data_bytes.data(),
               guest_animation->compressed_data_size);
 
-  /*
-  auto dump_name = fmt::format("animation_{}_memory_xenia.bin",
-  asset_id.to_string()); auto dump_handle = fopen(dump_name.c_str(), "wb");
-  fwrite(guest_animation, sizeof(X_AVATAR_ANIMATION), 1, dump_handle);
-  fclose(dump_handle);
-  */
-
   return true;
 }
 
+static bool LoadAnimationToGuest(const AssetId& asset_id,
+                                 X_AVATAR_ANIMATION* guest_animation,
+                                 uint32_t coordinate_system,
+                                 kernel::KernelState* kernel_state) {
+  const uint8_t* strb_buffer;
+  size_t strb_size;
+  if (!kernel_state->avatar_asset_pack()->GetAssetData(asset_id, strb_buffer,
+                                                       strb_size)) {
+    XELOGE("Failed to find avatar animation {}!", asset_id.to_string());
+    return false;
+  }
+
+  AnimationLoadOptions load_options = AnimationLoadOption::kGuest;
+  if (coordinate_system == 0) {
+    load_options |= AnimationLoadOption::kInvert;
+  }
+
+  auto animation = Animation::Load(strb_buffer, strb_size, load_options);
+  if (!animation) {
+    XELOGE("Failed to load avatar animation {}!", asset_id.to_string());
+    return false;
+  }
+
+  return LoadAnimationToGuest(asset_id, animation, guest_animation,
+                              kernel_state);
+}
+
 bool LoadAnimationToGuest(const AssetId& asset_id,
-                          kernel::KernelState* kernel_state,
-                          void* guest_animation, uint32_t coordinate_system) {
-  return LoadAnimationToGuest(asset_id, kernel_state,
+                          std::shared_ptr<Animation> animation,
+                          void* guest_animation,
+                          kernel::KernelState* kernel_state) {
+  return LoadAnimationToGuest(asset_id, animation,
                               static_cast<X_AVATAR_ANIMATION*>(guest_animation),
-                              coordinate_system);
+                              kernel_state);
+}
+
+bool LoadAnimationToGuest(const AssetId& asset_id, void* guest_animation,
+                          uint32_t coordinate_system,
+                          kernel::KernelState* kernel_state) {
+  return LoadAnimationToGuest(asset_id,
+                              static_cast<X_AVATAR_ANIMATION*>(guest_animation),
+                              coordinate_system, kernel_state);
 }
 
 }  // namespace avatars
