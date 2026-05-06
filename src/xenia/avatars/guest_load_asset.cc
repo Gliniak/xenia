@@ -156,6 +156,50 @@ static bool LoadFile(std::filesystem::path path, std::vector<uint8_t>& buffer) {
   return was_loaded;
 }
 
+static bool LoadAsset(AssetPack* asset_pack, const AssetId& asset_id,
+                      const uint8_t*& buffer, size_t& size,
+                      std::vector<uint8_t>& temp) {
+  const uint8_t* strb_buffer;
+  size_t strb_size;
+  std::vector<uint8_t> strb_bytes;
+  if (!asset_pack->GetAssetData(asset_id, strb_buffer, strb_size)) {
+    // TODO(gibbed): load from user data path
+    std::filesystem::path bin_path =
+        fmt::format("avatar_blobs\\{}.bin", asset_id.to_string());
+    if (!LoadFile(bin_path, strb_bytes)) {
+      return false;
+    }
+    strb_buffer = strb_bytes.data();
+    strb_size = strb_bytes.size();
+  }
+  return true;
+}
+
+template <typename Type>
+static std::shared_ptr<Type> LoadAsset(AssetPack* asset_pack,
+                                       const AssetId& asset_id) {
+  const uint8_t* strb_buffer;
+  size_t strb_size;
+  std::vector<uint8_t> strb_bytes;
+  if (!LoadAsset(asset_pack, asset_id, strb_buffer, strb_size, strb_bytes)) {
+    return nullptr;
+  }
+  return Type::Load(strb_buffer, strb_size);
+}
+
+template <typename Type, typename Options>
+static std::shared_ptr<Type> LoadAsset(AssetPack* asset_pack,
+                                       const AssetId& asset_id,
+                                       Options load_options) {
+  const uint8_t* strb_buffer;
+  size_t strb_size;
+  std::vector<uint8_t> strb_bytes;
+  if (!LoadAsset(asset_pack, asset_id, strb_buffer, strb_size, strb_bytes)) {
+    return nullptr;
+  }
+  return Type::Load(strb_buffer, strb_size, load_options);
+}
+
 struct ShaderParameterOverride {
   uint32_t usage;
   float x;
@@ -454,62 +498,6 @@ bool SkeletonToGuest(X_AVATAR_SKELETON* guest, std::shared_ptr<Skeleton> host,
   return true;
 }
 
-static std::shared_ptr<BlendShape> LoadBlendShapeAsset(
-    AssetPack* asset_pack, const X_AVATAR_BLEND_SHAPE& info,
-    BlendShapeLoadOptions load_options) {
-  const uint8_t* strb_buffer;
-  size_t strb_size;
-  std::vector<uint8_t> strb_bytes;
-  if (!asset_pack->GetAssetData(info.asset_id, strb_buffer, strb_size)) {
-    // TODO(gibbed): load from user data path
-    std::filesystem::path bin_path =
-        fmt::format("avatar_blobs\\{}.bin", info.asset_id.to_string());
-    if (!LoadFile(bin_path, strb_bytes)) {
-      return nullptr;
-    }
-    strb_buffer = strb_bytes.data();
-    strb_size = strb_bytes.size();
-  }
-  return BlendShape::Load(strb_buffer, strb_size, load_options);
-}
-
-static std::shared_ptr<Texture> LoadTextureAsset(
-    AssetPack* asset_pack, const X_AVATAR_METADATA_TEXTURE& info) {
-  const uint8_t* strb_buffer;
-  size_t strb_size;
-  std::vector<uint8_t> strb_bytes;
-  if (!asset_pack->GetAssetData(info.asset_id, strb_buffer, strb_size)) {
-    // TODO(gibbed): load from user data path
-    std::filesystem::path bin_path =
-        fmt::format("avatar_blobs\\{}.bin", info.asset_id.to_string());
-    if (!LoadFile(bin_path, strb_bytes)) {
-      return nullptr;
-    }
-    strb_buffer = strb_bytes.data();
-    strb_size = strb_bytes.size();
-  }
-  return Texture::Load(strb_buffer, strb_size);
-}
-
-static std::shared_ptr<Model> LoadModelAsset(
-    AssetPack* asset_pack, const X_AVATAR_COMPONENT_INFO& info,
-    ModelLoadOptions load_options) {
-  const uint8_t* strb_buffer;
-  size_t strb_size;
-  std::vector<uint8_t> strb_bytes;
-  if (!asset_pack->GetAssetData(info.asset_id, strb_buffer, strb_size)) {
-    // TODO(gibbed): load from user data path
-    std::filesystem::path bin_path =
-        fmt::format("avatar_blobs\\{}.bin", info.asset_id.to_string());
-    if (!LoadFile(bin_path, strb_bytes)) {
-      return nullptr;
-    }
-    strb_buffer = strb_bytes.data();
-    strb_size = strb_bytes.size();
-  }
-  return Model::Load(strb_buffer, strb_size, load_options);
-}
-
 static void GetShaderOverrides(
     const X_AVATAR_METADATA& metadata, uint32_t category_mask,
     std::vector<ShaderParameterOverride>& shader_parameter_overrides) {
@@ -609,19 +597,18 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
   size_t blend_shape_failures = 0;
   std::vector<std::pair<AssetId, std::shared_ptr<BlendShape>>> blend_shapes;
   for (size_t i = 0; i < 6; ++i) {
-    const auto& blend_shape_info = metadata.blend_shapes[i];
-    if (blend_shape_info.asset_id.is_zero()) {
+    const auto& asset_id = metadata.blend_shapes[i].asset_id;
+    if (asset_id.is_zero()) {
       continue;
     }
-    auto blend_shape = LoadBlendShapeAsset(asset_pack, blend_shape_info,
-                                           blend_shape_load_options);
+    auto blend_shape = LoadAsset<BlendShape, BlendShapeLoadOptions>(
+        asset_pack, asset_id, blend_shape_load_options);
     if (blend_shape == nullptr) {
-      XELOGE("Failed to load avatar blend shape {}!",
-             blend_shape_info.asset_id.to_string());
+      XELOGE("Failed to load avatar blend shape {}!", asset_id.to_string());
       blend_shape_failures++;
       continue;
     }
-    blend_shapes.push_back({blend_shape_info.asset_id, blend_shape});
+    blend_shapes.push_back({asset_id, blend_shape});
   }
 
   std::vector<X_AVATAR_COMPONENT_INFO> source_component_infos;
@@ -641,7 +628,8 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
   std::vector<std::pair<X_AVATAR_COMPONENT_INFO, std::shared_ptr<Model>>>
       source_components;
   for (const auto& source_info : source_component_infos) {
-    auto model = LoadModelAsset(asset_pack, source_info, model_load_options);
+    auto model = LoadAsset<Model, ModelLoadOptions>(
+        asset_pack, source_info.asset_id, model_load_options);
     if (model != nullptr) {
       // SaveModel(source_info, model, asset_pack);
       source_components.push_back({source_info, model});
@@ -653,7 +641,8 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
     for (const auto& candidate_info : metadata.fallback_components) {
       if (candidate_info.categories == source_info.categories) {
         // TODO(gibbed): if this fails... fall back even further?
-        model = LoadModelAsset(asset_pack, candidate_info, model_load_options);
+        model = LoadAsset<Model, ModelLoadOptions>(
+            asset_pack, candidate_info.asset_id, model_load_options);
         fallback_info = candidate_info;
         break;
       }
@@ -676,7 +665,7 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
     if (texture_info.asset_id.is_zero()) {
       continue;
     }
-    auto texture = LoadTextureAsset(asset_pack, texture_info);
+    auto texture = LoadAsset<Texture>(asset_pack, texture_info.asset_id);
     if (texture == nullptr) {
       XELOGE("Failed to load avatar replacement texture {}!",
              texture_info.asset_id.to_string());
