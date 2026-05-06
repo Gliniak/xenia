@@ -66,16 +66,15 @@ static bool LoadAsset(AssetPack* asset_pack, const AssetId& asset_id,
                       std::vector<uint8_t>& temp) {
   const uint8_t* strb_buffer;
   size_t strb_size;
-  std::vector<uint8_t> strb_bytes;
   if (!asset_pack->GetAssetData(asset_id, strb_buffer, strb_size)) {
     // TODO(gibbed): load from user data path
     std::filesystem::path bin_path =
         fmt::format("avatar_blobs\\{}.bin", asset_id.to_string());
-    if (!LoadFile(bin_path, strb_bytes)) {
+    if (!LoadFile(bin_path, temp)) {
       return false;
     }
-    strb_buffer = strb_bytes.data();
-    strb_size = strb_bytes.size();
+    strb_buffer = temp.data();
+    strb_size = temp.size();
   }
   return true;
 }
