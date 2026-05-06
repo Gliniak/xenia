@@ -19,7 +19,7 @@ namespace xe {
 namespace avatars {
 
 Texture Texture::Read(BitStream& stream) {
-  Texture instance;
+  Texture instance{};
   instance.format = stream.Read<uint32_t>();
   instance.width = stream.Read<uint32_t>();
   instance.height = stream.Read<uint32_t>();

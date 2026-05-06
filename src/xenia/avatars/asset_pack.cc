@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2021 Ben Vanik. All rights reserved.                             *
+ * Copyright 2026 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -63,7 +63,7 @@ bool LoadAssetPackFromMemoryV1(const uint8_t* data, size_t data_size,
       asset_infos.push_back({});
       continue;
     }
-    AssetInfo asset_info = {};
+    AssetInfo asset_info{};
     asset_info.categories = asset_header.categories;
     asset_info.bodies = asset_header.bodies;
     asset_info.random_bodies = asset_header.random_bodies;
@@ -111,7 +111,7 @@ bool LoadAssetPackFromMemoryV2(const uint8_t* data, size_t data_size,
       continue;
     }
 
-    AssetInfo asset_info = {};
+    AssetInfo asset_info{};
     asset_info.categories = asset_header.categories;
     asset_info.bodies = asset_header.bodies;
     asset_info.random_bodies = asset_header.random_bodies;
@@ -159,7 +159,7 @@ bool LoadAssetPackFromMemoryV3(const uint8_t* data, size_t data_size,
       continue;
     }
 
-    AssetInfo asset_info = {};
+    AssetInfo asset_info{};
     asset_info.categories = asset_header.categories;
     asset_info.bodies = asset_header.bodies;
     asset_info.random_bodies = asset_header.random_bodies;

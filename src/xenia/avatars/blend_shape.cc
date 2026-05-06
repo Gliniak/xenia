@@ -28,7 +28,7 @@ using BlendIndexSerializer = ValueSerializer<uint32_t>;
 using ColorSerializer = ValueSerializer<uint32_t>;
 
 static AssetId ReadAssetId(BitStream& stream) {
-  AssetId assetId;
+  AssetId assetId{};
   assetId.a = stream.Read<uint32_t>();
   assetId.b = stream.Read<uint16_t>();
   assetId.c = stream.Read<uint16_t>();
@@ -37,7 +37,7 @@ static AssetId ReadAssetId(BitStream& stream) {
 }
 
 BlendShapeIndexPatch BlendShapeIndexPatch::Read(BitStream& stream) {
-  BlendShapeIndexPatch instance;
+  BlendShapeIndexPatch instance{};
 
   uint32_t index_count = stream.Read<uint32_t>();
   assert_true(index_count <= 8192);
@@ -83,7 +83,7 @@ struct BlendShapeVertexSerializer {
 
  public:
   static BlendShapeVertexSerializer From(BitStream& stream) {
-    BlendShapeVertexSerializer instance;
+    BlendShapeVertexSerializer instance{};
     instance.inverted = false;
     instance.original_index_serializer = IndexSerializer::From(stream);
     instance.position_serializer = VectorSerializer::From(stream);
@@ -100,7 +100,7 @@ struct BlendShapeVertexSerializer {
   }
 
   BlendShapeVertex Read(BitStream& stream) const {
-    BlendShapeVertex instance;
+    BlendShapeVertex instance{};
     instance.original_offset = original_index_serializer.Read(stream);
     instance.position = position_serializer.Read(stream);
     instance.normal = normal_serializer.Read(stream);
@@ -121,7 +121,7 @@ BlendShapeVertexPatch BlendShapeVertexPatch::Read(
     BitStream& stream, BlendShapeLoadOptions load_options) {
   using IndexSerializer = ValueSerializer<int32_t>;
 
-  BlendShapeVertexPatch instance;
+  BlendShapeVertexPatch instance{};
 
   uint32_t vertex_count = stream.Read<uint32_t>();
   assert_true(vertex_count <= 8192);

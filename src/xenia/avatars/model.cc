@@ -22,7 +22,7 @@ namespace xe {
 namespace avatars {
 
 ShaderParameter ShaderParameter::Load(BitStream& stream) {
-  ShaderParameter instance = {};
+  ShaderParameter instance{};
   instance.type = static_cast<ShaderParameterType>(stream.Read<uint32_t>());
   instance.usage = stream.Read<uint32_t>();
   if (instance.type == ShaderParameterType::kTexture) {
@@ -40,7 +40,7 @@ ShaderParameter ShaderParameter::Load(BitStream& stream) {
 
 TriangleBatch TriangleBatch::Read(BitStream& stream,
                                   ModelLoadOptions load_options) {
-  TriangleBatch instance;
+  TriangleBatch instance{};
   instance.shader_id = stream.Read<uint32_t>();
   uint8_t shader_parameter_count = stream.Read<uint8_t>(5);
   instance.triangle_count = stream.Read<uint32_t>();
@@ -93,7 +93,7 @@ std::vector<Vertex> TriangleBatch::ReadVertices(BitStream& stream,
 
   std::vector<Vertex> vertices;
   for (size_t i = 0; i < vertex_count; ++i) {
-    Vertex vertex;
+    Vertex vertex{};
     vertex.position = vector_serializer.Read(stream);
     vertex.normal = normal_serializer.Read(stream);
     if (inverted) {
@@ -131,7 +131,7 @@ std::vector<uint16_t> TriangleBatch::ReadIndices(BitStream& stream,
 }
 
 ModelTexture ModelTexture::Read(BitStream& stream) {
-  ModelTexture instance;
+  ModelTexture instance{};
   instance.gpu_offset = stream.Read<uint32_t>();
   instance.gpu_size = stream.Read<uint32_t>();
   instance.texture = Texture::Read(stream);

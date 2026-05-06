@@ -35,7 +35,7 @@ struct JointSerializer {
 
  public:
   static JointSerializer From(BitStream& stream) {
-    JointSerializer instance;
+    JointSerializer instance{};
     instance.position_serializer = VectorSerializer::From(stream);
     instance.rotation_serializer = QuaternionSerializer::From(stream);
     return instance;
@@ -47,7 +47,7 @@ struct JointSerializer {
   }
 
   Joint Read(BitStream& stream) const {
-    Joint instance;
+    Joint instance{};
     instance.parent_index = stream.Read<uint8_t>();
     instance.bindpose.position = position_serializer.Read(stream);
     instance.bindpose.rotation = rotation_serializer.Read(stream);
