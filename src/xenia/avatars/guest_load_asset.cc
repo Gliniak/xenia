@@ -11,6 +11,8 @@
 #include <stack>
 
 #include "xenia/avatars/asset_pack.h"
+#include "xenia/avatars/blend_shape.h"
+#include "xenia/avatars/blend_shape_apply.h"
 #include "xenia/avatars/compression.h"
 #include "xenia/avatars/guest_asset.h"
 #include "xenia/avatars/guest_load_asset.h"
@@ -593,9 +595,9 @@ bool SkeletonToGuest(X_AVATAR_SKELETON* guest, std::shared_ptr<Skeleton> host,
   return true;
 }
 
-static std::shared_ptr<Model> LoadModelAsset(
-    AssetPack* asset_pack, const X_AVATAR_COMPONENT_INFO& info,
-    ModelLoadOptions model_load_options) {
+static std::shared_ptr<BlendShape> LoadBlendShapeAsset(
+    AssetPack* asset_pack, const X_AVATAR_BLEND_SHAPE& info,
+    BlendShapeLoadOptions load_options) {
   const uint8_t* strb_buffer;
   size_t strb_size;
   std::vector<uint8_t> strb_bytes;
@@ -609,7 +611,7 @@ static std::shared_ptr<Model> LoadModelAsset(
     strb_buffer = strb_bytes.data();
     strb_size = strb_bytes.size();
   }
-  return Model::Load(strb_buffer, strb_size, model_load_options);
+  return BlendShape::Load(strb_buffer, strb_size, load_options);
 }
 
 static std::shared_ptr<Texture> LoadTextureAsset(
@@ -628,6 +630,25 @@ static std::shared_ptr<Texture> LoadTextureAsset(
     strb_size = strb_bytes.size();
   }
   return Texture::Load(strb_buffer, strb_size);
+}
+
+static std::shared_ptr<Model> LoadModelAsset(
+    AssetPack* asset_pack, const X_AVATAR_COMPONENT_INFO& info,
+    ModelLoadOptions load_options) {
+  const uint8_t* strb_buffer;
+  size_t strb_size;
+  std::vector<uint8_t> strb_bytes;
+  if (!asset_pack->GetAssetData(info.asset_id, strb_buffer, strb_size)) {
+    // TODO(gibbed): load from user data path
+    std::filesystem::path bin_path =
+        fmt::format("avatar_blobs\\{}.bin", info.asset_id.to_string());
+    if (!LoadFile(bin_path, strb_bytes)) {
+      return nullptr;
+    }
+    strb_buffer = strb_bytes.data();
+    strb_size = strb_bytes.size();
+  }
+  return Model::Load(strb_buffer, strb_size, load_options);
 }
 
 static void GetShaderOverrides(
@@ -698,9 +719,11 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
                        uint32_t coordinate_system) {
   category_mask &= ~ComponentCategory::kProp;
 
+  BlendShapeLoadOptions blend_shape_load_options = BlendShapeLoadOption::kNone;
   SkeletonLoadOptions skeleton_load_options = SkeletonLoadOption::kNone;
   ModelLoadOptions model_load_options = ModelLoadOption::kNone;
   if (coordinate_system == 0) {
+    blend_shape_load_options |= BlendShapeLoadOption::kInvert;
     skeleton_load_options |= SkeletonLoadOption::kInvert;
     model_load_options |= ModelLoadOption::kInvert;
   }
@@ -724,7 +747,23 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
     return false;
   }
 
-  // TODO(gibbed): apply blend shapes to skeleton
+  size_t blend_shape_failures = 0;
+  std::vector<std::pair<AssetId, std::shared_ptr<BlendShape>>> blend_shapes;
+  for (size_t i = 0; i < 6; ++i) {
+    const auto& blend_shape_info = metadata.blend_shapes[i];
+    if (blend_shape_info.asset_id.is_zero()) {
+      continue;
+    }
+    auto blend_shape = LoadBlendShapeAsset(asset_pack, blend_shape_info,
+                                           blend_shape_load_options);
+    if (blend_shape == nullptr) {
+      XELOGE("Failed to load avatar blend shape {}!",
+             blend_shape_info.asset_id.to_string());
+      blend_shape_failures++;
+      continue;
+    }
+    blend_shapes.push_back({blend_shape_info.asset_id, blend_shape});
+  }
 
   std::vector<X_AVATAR_COMPONENT_INFO> source_component_infos;
   if (metadata.body_component.matches(category_mask)) {
@@ -786,6 +825,23 @@ bool LoadAssetsToGuest(const X_AVATAR_METADATA& metadata,
       continue;
     }
     replacement_textures[i] = texture;
+  }
+
+  for (const auto& source_component : source_components) {
+    for (const auto& blend_shape : blend_shapes) {
+      if (!blend_shape.second->matches(source_component.first.asset_id)) {
+        continue;
+      }
+      if (!ApplyBlendShape(blend_shape.second, source_component.first.asset_id,
+                           source_component.second)) {
+        XELOGE("Failed to apply blend shape {} to asset {}!",
+               blend_shape.first.to_string(),
+               source_component.first.asset_id.to_string());
+      }
+      XELOGE("Applied blend shape {} to asset {}.",
+             blend_shape.first.to_string(),
+             source_component.first.asset_id.to_string());
+    }
   }
 
   auto assets = cpu_memory->Claim<X_AVATAR_ASSETS>();

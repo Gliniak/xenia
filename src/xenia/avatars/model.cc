@@ -85,7 +85,9 @@ std::vector<Vertex> TriangleBatch::ReadVertices(BitStream& stream,
   auto blend_indices_serializer = ValueSerializer<uint32_t>::From(stream);
   auto color_serializer = ValueSerializer<uint32_t>::From(stream);
 
-  if (load_options & ModelLoadOption::kInvert) {
+  bool inverted = !!(load_options & ModelLoadOption::kInvert);
+
+  if (inverted) {
     vector_serializer.invert();
   }
 
@@ -94,7 +96,7 @@ std::vector<Vertex> TriangleBatch::ReadVertices(BitStream& stream,
     Vertex vertex;
     vertex.position = vector_serializer.Read(stream);
     vertex.normal = normal_serializer.Read(stream);
-    if (load_options & ModelLoadOption::kInvert) {
+    if (inverted) {
       uint32_t normal_z = vertex.normal >> 22;
       normal_z = ~normal_z + 1;
       vertex.normal &= ~(0x3FFu << 22);

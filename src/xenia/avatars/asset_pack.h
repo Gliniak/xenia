@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2022 Ben Vanik. All rights reserved.                             *
+ * Copyright 2026 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -29,6 +29,11 @@ struct AssetId {
   bool operator==(const AssetId& other) const {
     return a == other.a && b == other.b && c == other.c &&
            !std::memcmp(d, other.d, sizeof(d));
+  }
+
+  bool operator!=(const AssetId& other) const {
+    return a != other.a || b != other.b || c != other.c ||
+           std::memcmp(d, other.d, sizeof(d));
   }
 
   bool is_zero() const { return *this == AssetId{}; };

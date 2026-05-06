@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2022 Ben Vanik. All rights reserved.                             *
+ * Copyright 2026 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -48,6 +48,12 @@ class BitStream {
 
   uint64_t Peek(size_t num_bits) const;
   uint64_t Read(size_t num_bits);
+
+  void ReadBytes(uint8_t* buffer, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+      buffer[i] = Read<uint8_t>();
+    }
+  }
 
   template <typename T>
   T Read() {
