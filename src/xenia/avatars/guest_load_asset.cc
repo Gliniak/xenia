@@ -357,8 +357,9 @@ static bool ModelToGuest(
   return true;
 }
 
-bool SkeletonToGuest(X_AVATAR_SKELETON* guest, std::shared_ptr<Skeleton> host,
-                     MemoryBlock* cpu_memory) {
+static bool SkeletonToGuest(X_AVATAR_SKELETON* guest,
+                            std::shared_ptr<Skeleton> host,
+                            MemoryBlock* cpu_memory) {
   assert_true(host->joints.size() <= 72);
   uint8_t joint_count = static_cast<uint8_t>(host->joints.size());
 
