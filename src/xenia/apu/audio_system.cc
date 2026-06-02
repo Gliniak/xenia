@@ -14,6 +14,7 @@
 #include "xenia/apu/xma_decoder.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/byte_stream.h"
+#include "xenia/base/clock.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
@@ -35,13 +36,6 @@
 // and let the normal AudioSystem handling take it, to prevent duplicate
 // implementations. They can be found in xboxkrnl_audio_xma.cc
 
-DEFINE_uint32(apu_max_queued_frames, 8,
-              "Allows changing max buffered audio frames to reduce audio "
-              "delay. Lowering this value might cause performance issues. "
-              "Value range: [4-64]",
-              "APU");
-UPDATE_from_uint32(apu_max_queued_frames, 2024, 8, 31, 20, 64);
-
 namespace xe {
 namespace apu {
 
@@ -50,12 +44,10 @@ AudioSystem::AudioSystem(cpu::Processor* processor)
       processor_(processor),
       worker_running_(false) {
   std::memset(clients_, 0, sizeof(clients_));
-  queued_frames_ = std::clamp(cvars::apu_max_queued_frames,
-                              static_cast<uint32_t>(kMinimumQueuedFrames),
-                              static_cast<uint32_t>(kMaximumQueuedFrames));
 
   for (size_t i = 0; i < kMaximumClientCount; ++i) {
-    client_semaphores_[i] = xe::threading::Semaphore::Create(0, queued_frames_);
+    client_semaphores_[i] =
+        xe::threading::Semaphore::Create(0, kMaximumQueuedFrames);
     wait_handles_[i] = client_semaphores_[i].get();
   }
   shutdown_event_ = xe::threading::Event::CreateAutoResetEvent(false);
@@ -93,7 +85,8 @@ X_STATUS AudioSystem::Setup(kernel::KernelState* kernel_state) {
   worker_thread_->set_can_debugger_suspend(true);
   worker_thread_->set_name("Audio Worker");
   worker_thread_->Create();
-
+  // Set high priority for this thread for better pacing.
+  worker_thread_->SetPriority(24);
   return X_STATUS_SUCCESS;
 }
 
@@ -135,6 +128,31 @@ void AudioSystem::WorkerThreadMain() {
       global_lock.unlock();
 
       if (client_callback) {
+        // Xenos audio subsystem operates at 5.333ms interval (see
+        // xaudio2_audio_driver.cc) Interval scales inversely with
+        // guest_time_scalar.
+        const double scalar = xe::Clock::guest_time_scalar();
+        const uint64_t min_us =
+            scalar > 0.0 ? static_cast<uint64_t>(kAudioPumpInterval / scalar)
+                         : kAudioPumpInterval;
+
+        const uint64_t now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        uint64_t next_pump_time = next_pump_us[index];
+        if (next_pump_time != 0 && now <= next_pump_time) {
+          // Wake early so processing time doesn't push us past the deadline.
+          const uint64_t remaining_us = next_pump_time - now;
+          if (remaining_us > kAudioIntervalSlack) {
+            xe::threading::NanoSleepPrecise(
+                (remaining_us - kAudioIntervalSlack) * 1000);
+          }
+        } else {
+          next_pump_time = now;
+        }
+        next_pump_us[index] = next_pump_time + min_us;
+
         SCOPE_profile_cpu_i("apu", "xe::apu::AudioSystem->client_callback");
         uint64_t args[] = {client_callback_arg};
         processor_->Execute(worker_thread_->thread_state(), client_callback,
@@ -149,8 +167,7 @@ void AudioSystem::WorkerThreadMain() {
     }
 
     if (!pumped) {
-      SCOPE_profile_cpu_i("apu", "Sleep");
-      xe::threading::Sleep(std::chrono::milliseconds(500));
+      continue;
     }
   }
   worker_running_ = false;
@@ -207,7 +224,7 @@ X_STATUS AudioSystem::RegisterClient(uint32_t callback, uint32_t callback_arg,
   assert_true(index >= 0);
 
   auto client_semaphore = client_semaphores_[index].get();
-  auto ret = client_semaphore->Release(queued_frames_, nullptr);
+  auto ret = client_semaphore->Release(kMaximumQueuedFrames, nullptr);
   assert_true(ret);
 
   AudioDriver* driver;
@@ -269,6 +286,7 @@ void AudioSystem::UnregisterClient(size_t index) {
   DestroyDriver(clients_[index].driver);
   memory()->SystemHeapFree(clients_[index].wrapped_callback_arg);
   clients_[index] = {0};
+  next_pump_us[index] = 0;
 
   // Drain the semaphore of its count.
   auto client_semaphore = client_semaphores_[index].get();
@@ -333,7 +351,7 @@ bool AudioSystem::Restore(ByteStream* stream) {
     client.in_use = true;
 
     auto client_semaphore = client_semaphores_[id].get();
-    auto ret = client_semaphore->Release(queued_frames_, nullptr);
+    auto ret = client_semaphore->Release(kMaximumQueuedFrames, nullptr);
     assert_true(ret);
 
     AudioDriver* driver = nullptr;

@@ -30,10 +30,9 @@ class XmaDecoder;
 
 class AudioSystem {
  public:
-  // TODO(gibbed): respect XAUDIO2_MAX_QUEUED_BUFFERS somehow (ie min(64,
-  // XAUDIO2_MAX_QUEUED_BUFFERS))
-  static constexpr size_t kMinimumQueuedFrames = 4;
   static constexpr size_t kMaximumQueuedFrames = 64;
+  static constexpr uint32_t kAudioPumpInterval = 5333u;
+  static constexpr uint32_t kAudioIntervalSlack = 400u;
 
   virtual ~AudioSystem();
 
@@ -78,7 +77,6 @@ class AudioSystem {
   Memory* memory_ = nullptr;
   cpu::Processor* processor_ = nullptr;
   std::unique_ptr<XmaDecoder> xma_decoder_;
-  uint32_t queued_frames_;
 
   std::atomic<bool> worker_running_ = {false};
   kernel::object_ref<kernel::XHostThread> worker_thread_;
@@ -104,6 +102,10 @@ class AudioSystem {
   bool paused_ = false;
   threading::Fence pause_fence_;
   std::unique_ptr<threading::Event> resume_event_;
+
+  // Target time of the next mixer callback (in microseconds).
+  // Each client is pacing at it's own cadence.
+  uint64_t next_pump_us[kMaximumClientCount]{};
 };
 
 }  // namespace apu
