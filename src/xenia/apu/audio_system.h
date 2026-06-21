@@ -10,6 +10,7 @@
 #ifndef XENIA_APU_AUDIO_SYSTEM_H_
 #define XENIA_APU_AUDIO_SYSTEM_H_
 
+#include <array>
 #include <atomic>
 #include <queue>
 
@@ -45,8 +46,8 @@ class AudioSystem {
   virtual X_STATUS Setup(kernel::KernelState* kernel_state);
   virtual void Shutdown();
 
-  X_STATUS RegisterClient(uint32_t callback, uint32_t callback_arg,
-                          size_t* out_index);
+  X_STATUS RegisterClient(kernel::KernelState* kernel_state, uint32_t callback,
+                          uint32_t callback_arg, size_t* out_index);
   void UnregisterClient(size_t index);
   void SubmitFrame(size_t index, float* samples);
 
@@ -67,7 +68,7 @@ class AudioSystem {
 
   virtual void Initialize();
 
-  void WorkerThreadMain();
+  void WorkerThreadMain(size_t index);
 
   virtual X_STATUS CreateDriver(size_t index,
                                 xe::threading::Semaphore* semaphore,
@@ -78,11 +79,13 @@ class AudioSystem {
   cpu::Processor* processor_ = nullptr;
   std::unique_ptr<XmaDecoder> xma_decoder_;
 
-  std::atomic<bool> worker_running_ = {false};
-  kernel::object_ref<kernel::XHostThread> worker_thread_;
+  static constexpr size_t kMaximumClientCount = 8;
+  std::array<std::atomic<bool>, kMaximumClientCount> worker_running_ = {};
+  std::array<kernel::object_ref<kernel::XHostThread>, kMaximumClientCount>
+      worker_thread_;
 
   xe::global_critical_region global_critical_region_;
-  static constexpr size_t kMaximumClientCount = 8;
+
   struct {
     AudioDriver* driver;
     uint32_t callback;

@@ -72,56 +72,38 @@ X_STATUS AudioSystem::Setup(kernel::KernelState* kernel_state) {
     return result;
   }
 
-  worker_running_ = true;
-  worker_thread_ =
-      kernel::object_ref<kernel::XHostThread>(new kernel::XHostThread(
-          kernel_state, 128 * 1024, 0,
-          [this]() {
-            WorkerThreadMain();
-            return 0;
-          },
-          kernel_state->GetSystemProcess()));
-  // As we run audio callbacks the debugger must be able to suspend us.
-  worker_thread_->set_can_debugger_suspend(true);
-  worker_thread_->set_name("Audio Worker");
-  worker_thread_->Create();
-  // Set high priority for this thread for better pacing.
-  worker_thread_->SetPriority(24);
+  Initialize();
   return X_STATUS_SUCCESS;
 }
 
-void AudioSystem::WorkerThreadMain() {
-  // Initialize driver and ringbuffer.
-  Initialize();
-
+void AudioSystem::WorkerThreadMain(size_t index) {
   // Main run loop.
-  while (worker_running_) {
+  while (worker_running_[index]) {
     // These handles signify the number of submitted samples. Once we reach
     // 64 samples, we wait until our audio backend releases a semaphore
     // (signaling a sample has finished playing)
-    auto result =
-        xe::threading::WaitAny(wait_handles_, xe::countof(wait_handles_), true);
-    if (result.first == xe::threading::WaitResult::kFailed) {
-      // TODO: Assert?
-      continue;
+
+    auto result = xe::threading::Wait(wait_handles_[index], true);
+    if (!worker_running_[index]) {
+      break;
     }
 
-    if (result.first == threading::WaitResult::kSuccess &&
-        result.second == kMaximumClientCount) {
-      // Shutdown event signaled.
-      if (paused_) {
-        pause_fence_.Signal();
-        threading::Wait(resume_event_.get(), false);
+    if (paused_) {
+      pause_fence_.Signal();
+      threading::Wait(resume_event_.get(), false);
+      if (!worker_running_[index]) {
+        break;
       }
+    }
 
+    if (result == xe::threading::WaitResult::kFailed) {
+      // TODO: Assert?
       continue;
     }
 
     // Number of clients pumped
     bool pumped = false;
-    if (result.first == xe::threading::WaitResult::kSuccess) {
-      auto index = result.second;
-
+    if (result == xe::threading::WaitResult::kSuccess) {
       auto global_lock = global_critical_region_.Acquire();
       uint32_t client_callback = clients_[index].callback;
       uint32_t client_callback_arg = clients_[index].wrapped_callback_arg;
@@ -155,14 +137,14 @@ void AudioSystem::WorkerThreadMain() {
 
         SCOPE_profile_cpu_i("apu", "xe::apu::AudioSystem->client_callback");
         uint64_t args[] = {client_callback_arg};
-        processor_->Execute(worker_thread_->thread_state(), client_callback,
-                            args, xe::countof(args));
+        processor_->Execute(worker_thread_[index]->thread_state(),
+                            client_callback, args, xe::countof(args));
       }
 
       pumped = true;
     }
 
-    if (!worker_running_) {
+    if (!worker_running_[index]) {
       break;
     }
 
@@ -170,7 +152,7 @@ void AudioSystem::WorkerThreadMain() {
       continue;
     }
   }
-  worker_running_ = false;
+  worker_running_[index] = false;
 
   // TODO(benvanik): call module API to kill?
 }
@@ -189,12 +171,15 @@ int AudioSystem::FindFreeClient() {
 void AudioSystem::Initialize() {}
 
 void AudioSystem::Shutdown() {
-  worker_running_ = false;
-  shutdown_event_->Set();
-  if (worker_thread_) {
-    worker_thread_->Wait(0, 0, 0, nullptr);
-    worker_thread_.reset();
+  for (size_t i = 0; i < kMaximumClientCount; i++) {
+    if (worker_thread_[i]) {
+      worker_thread_[i]->Wait(0, 0, 0, nullptr);
+      worker_thread_[i].reset();
+    }
+    worker_running_[i] = false;
   }
+
+  shutdown_event_->Set();
 
   // Unregister all active clients to shut down their audio drivers before
   // the semaphores are destroyed with this AudioSystem.
@@ -216,7 +201,8 @@ void AudioSystem::Shutdown() {
   }
 }
 
-X_STATUS AudioSystem::RegisterClient(uint32_t callback, uint32_t callback_arg,
+X_STATUS AudioSystem::RegisterClient(kernel::KernelState* kernel_state,
+                                     uint32_t callback, uint32_t callback_arg,
                                      size_t* out_index) {
   auto global_lock = global_critical_region_.Acquire();
 
@@ -241,6 +227,23 @@ X_STATUS AudioSystem::RegisterClient(uint32_t callback, uint32_t callback_arg,
 
   uint32_t ptr = memory()->SystemHeapAlloc(0x4);
   xe::store_and_swap<uint32_t>(memory()->TranslateVirtual(ptr), callback_arg);
+
+  worker_running_[index] = true;
+  worker_thread_[index] =
+      kernel::object_ref<kernel::XHostThread>(new kernel::XHostThread(
+          kernel_state, 128 * 1024, 0,
+          [this, index]() {
+            WorkerThreadMain(index);
+            return 0;
+          },
+          kernel_state->GetSystemProcess()));
+  // As we run audio callbacks the debugger must be able to suspend us.
+  worker_thread_[index]->set_can_debugger_suspend(true);
+  worker_thread_[index]->set_name(fmt::format("Audio Worker {}", index));
+  worker_thread_[index]->Create();
+  // Set high priority for this thread for better pacing.
+  worker_thread_[index]->SetPriority(24);
+  worker_thread_[index]->SetAffinity(16);
 
   clients_[index] = {driver, callback, callback_arg, ptr, true};
   XELOGI("AudioSystem::RegisterClient: client {} registered successfully",
@@ -281,8 +284,13 @@ void AudioSystem::SubmitFrame(size_t index, float* samples) {
 void AudioSystem::UnregisterClient(size_t index) {
   SCOPE_profile_cpu_f("apu");
 
+  worker_running_[index] = false;
+  client_semaphores_[index]->Release(1, nullptr);
+  worker_thread_[index]->Wait(0, 0, 0, nullptr);
+
   auto global_lock = global_critical_region_.Acquire();
   assert_true(index < kMaximumClientCount);
+  worker_thread_[index].reset();
   DestroyDriver(clients_[index].driver);
   memory()->SystemHeapFree(clients_[index].wrapped_callback_arg);
   clients_[index] = {0};
