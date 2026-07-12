@@ -279,6 +279,12 @@ bool Memory::Initialize() {
     return false;
   }
 
+  // Based on The Club. On boot it expects first page in this range to be
+  // aligned to 0x10000 not 0x1000.
+  heaps_.v00000000.AllocFixed(0x00204000, 0xC000, 0x1000,
+                              kMemoryAllocationCommit,
+                              kMemoryProtectRead | kMemoryProtectWrite);
+
   // ?
   uint32_t unk_phys_alloc;
   heaps_.vA0000000.Alloc(0x340000, 64 * 1024, kMemoryAllocationReserve,
