@@ -446,5 +446,11 @@ X_STATUS VirtualFileSystem::ExtractDeviceFiles(Device* device,
   return X_STATUS_SUCCESS;
 }
 
+void VirtualFileSystem::Refresh() {
+  for (auto& dev : devices_) {
+    dev->Refresh();
+  }
+}
+
 }  // namespace vfs
 }  // namespace xe

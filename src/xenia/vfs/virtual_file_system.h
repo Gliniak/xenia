@@ -58,6 +58,8 @@ class VirtualFileSystem {
                                      std::filesystem::path base_path,
                                      uint64_t& progress);
 
+  void Refresh();
+
  private:
   xe::global_critical_region global_critical_region_;
   std::vector<std::unique_ptr<Device>> devices_;

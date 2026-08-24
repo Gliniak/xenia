@@ -52,6 +52,10 @@ void HostPathDevice::Dump(StringBuffer* string_buffer) {
   root_entry_->Dump(string_buffer, 0);
 }
 
+void HostPathDevice::Refresh() {
+  PopulateEntry(dynamic_cast<HostPathEntry*>(root_entry_.get()));
+}
+
 Entry* HostPathDevice::ResolvePath(const std::string_view path) {
   // The filesystem will have stripped our prefix off already, so the path will
   // be in the form:

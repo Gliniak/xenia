@@ -114,6 +114,9 @@ dword_result_t XamProfileClose_entry(lpstring_t mount_name) {
       kernel_state()->xam_state()->profile_manager()->DismountProfile(
           guest_name);
 
+
+  kernel_state()->file_system()->Refresh();
+
   return result ? X_ERROR_SUCCESS : X_ERROR_FUNCTION_FAILED;
 }
 DECLARE_XAM_EXPORT1(XamProfileClose, kNone, kStub);

@@ -41,6 +41,7 @@ class Device {
   virtual uint32_t available_allocation_units() const = 0;
   virtual uint32_t sectors_per_allocation_unit() const = 0;
   virtual uint32_t bytes_per_sector() const = 0;
+  virtual void Refresh() {};
 
  protected:
   xe::global_critical_region global_critical_region_;
